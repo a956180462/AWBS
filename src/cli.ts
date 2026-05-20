@@ -257,7 +257,7 @@ Commands:
   awbs view revoke <viewId>
   awbs changeset collect --workspace <workspace>
   awbs changeset inspect <changesetDir|id> [--json]
-  awbs changeset apply <changesetDir|id> --adapter same-path
+  awbs changeset apply <changesetDir|id>
   awbs authority verify [--json]
   awbs authority repair-mirrors [--json]
 `);

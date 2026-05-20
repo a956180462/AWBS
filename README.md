@@ -29,7 +29,7 @@ init
 - 可以在一个目录中初始化 AWBS 数据库；如果不是 Git repo，会自动 `git init`。
 - 可以使用磁盘 SQLite + FTS5 建立持久索引：默认写入 `.awbs/index/files.sqlite`。
 - 可以查询文件路径、摘要和 active/removed 状态。
-- 可以通过 `summary` 命令写入、读取、列出外部摘要；AWBS 不内置 AI 摘要模型。
+- 可以通过 `summary` 命令写入、读取、列出外部摘要；摘要永远由上层业务或外部工具生成。
 - 可以创建 copy-based 工作空间视图，不重命名目录，只按原路径复制。
 - 每个 view 都有唯一 UUID，并在 `.awbs/authority` 下生成密封契约。
 - workspace 里的 `.awbs-view.json` 只作为展示/索引，不再作为权限事实源。
@@ -37,18 +37,18 @@ init
 - 只读路径被修改时，changeset 会变成 invalid，apply 永远拒绝。
 - view revoke 后，基于该 view 的新 collect/apply 会被拒绝。
 - apply 时要求当前 Git `HEAD` 等于 changeset 的 `baseCommit`，体现单线生长原则。
-- v0 只实现 `same-path` adapter：可写路径变化写回数据库同名路径。
 - 已经有 Node 内置测试覆盖架构、authority、changeset、SQLite 索引和 CLI 闭环。
 - 当前仓库已经是 public GitHub repository，并带 MIT License。
+
+摘要边界是硬边界：AWBS 永远不会内置 AI 摘要模型、API 配置、提示词或业务理解逻辑。AWBS 只保存和索引上层写入的摘要。
 
 ## 还没有做什么
 
 - 还没有发布到 npm registry；目前可以从本地 checkout 全局安装。
-- 还没有实现真实 AI 摘要 provider；摘要由上层业务或外部 agent 写入。
-- 还没有实现复杂业务 adapter；目前只有 `same-path`。
 - 还没有实现操作系统级只读属性、文件级 ACL 或强安全沙箱。
 - 还没有实现跨机器 authority key 迁移。
 - 还没有实现 workflow/run/step 的完整记录层。
+- 还没有实现 AWBS 写入账本和数据库审计清理能力；这部分进入 003 任务。
 
 ## 安装与运行
 
@@ -86,7 +86,7 @@ awbs view create --out ..\awbs-workspace --read A --write B
 
 awbs changeset collect --workspace ..\awbs-workspace
 awbs changeset inspect <changesetId>
-awbs changeset apply <changesetId> --adapter same-path
+awbs changeset apply <changesetId>
 ```
 
 ## CLI 命令
@@ -103,7 +103,7 @@ awbs view inspect <viewId> [--json]
 awbs view revoke <viewId>
 awbs changeset collect --workspace <workspace>
 awbs changeset inspect <changesetDir|id> [--json]
-awbs changeset apply <changesetDir|id> --adapter same-path
+awbs changeset apply <changesetDir|id>
 awbs authority verify [--json]
 awbs authority repair-mirrors [--json]
 ```
@@ -112,6 +112,7 @@ awbs authority repair-mirrors [--json]
 
 - [AWBS_CORE_DESIGN.md](./AWBS_CORE_DESIGN.md)：核心思想、当前能力、技术架构、索引设计和 npm 包状态。
 - [TASK_001_VIEW_AUTHORITY.md](./TASK_001_VIEW_AUTHORITY.md)：视图鉴权器、密封契约、明文镜像和鉴权目录总账。
+- [TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md](./TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md)：AWBS 写入账本、Git 提交审计和数据库污染清理设计。
 
 ## Development Status
 
@@ -125,22 +126,23 @@ It already supports:
 - Copy-based workspace view creation.
 - Sealed view authority contracts.
 - View inspection and revocation.
-- Changeset collection, inspection, and same-path apply.
+- Changeset collection, inspection, and apply.
 - Readonly-path violation detection.
 - Stale base commit rejection.
 - Authority verification and mirror repair.
 - Node test coverage for the main closed loop.
 
+Summary generation is deliberately outside AWBS. AWBS never ships a built-in AI summarizer, model configuration, API key flow, prompt layer, or business-specific content understanding. Upper-layer applications may generate summaries however they want and write them through AWBS summary commands.
+
 It does not yet provide:
 
 - npm registry publishing.
-- Built-in AI summary generation.
-- Custom business changeset adapters.
 - OS-level readonly enforcement.
 - File-level ACL.
 - Strong sandbox isolation.
 - Cross-machine authority key migration.
 - Full workflow/run/step history.
+- AWBS ledger and database audit/cleanup commands.
 
 ## English Quick Start
 
@@ -171,8 +173,14 @@ awbs view create --out ..\awbs-workspace --read A --write B
 
 awbs changeset collect --workspace ..\awbs-workspace
 awbs changeset inspect <changesetId>
-awbs changeset apply <changesetId> --adapter same-path
+awbs changeset apply <changesetId>
 ```
+
+## Maintenance And Contributions
+
+中文：这个仓库是公开的个人研究型开源项目，更新节奏随缘。你可以阅读、fork、改造和自用；issue 或 pull request 可以提，但不保证处理，也不承诺接受外部代码合入。本仓库不会开放外部直接提交权限。
+
+English: This is a public personal research project with irregular maintenance. You are welcome to read, fork, modify, and use it for your own work. Issues and pull requests may be opened, but there is no guarantee of review, merge, or ongoing support. External direct commit access is not granted.
 
 ## Development
 

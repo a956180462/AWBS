@@ -25,7 +25,8 @@
   "files": [
     "src",
     "AWBS_CORE_DESIGN.md",
-    "TASK_001_VIEW_AUTHORITY.md"
+    "TASK_001_VIEW_AUTHORITY.md",
+    "TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md"
   ],
   "scripts": {
     "awbs": "node src/cli.ts",

@@ -497,7 +497,7 @@ awbs changeset apply
 
 ## 15. v0 代码架构
 
-AWBS v0 的代码实现应当保持“机制清楚、实现可替换”的结构。第一版不能继续把 Git、文件系统、索引、视图生成和变更包逻辑都放在一个大文件里，否则后续接入 SQLite、AI 摘要、workflow / run / step、自定义 adapter 时，会让底层机制和具体实现互相缠住。
+AWBS v0 的代码实现应当保持“机制清楚、实现可替换”的结构。第一版不能继续把 Git、文件系统、索引、视图生成和变更包逻辑都放在一个大文件里，否则后续接入新的索引实现、workflow / run / step、数据库审计和账本机制时，会让底层机制和具体实现互相缠住。
 
 v0 代码分为四层：
 
@@ -568,7 +568,7 @@ createDefaultRuntime()
   -> use cases
 ```
 
-这样，CLI 不直接依赖具体基础设施实现。当前默认索引后端是磁盘 SQLite + FTS5；如果未来要替换成其他嵌入式索引，只需要替换 `IndexStorePort` 的实现。如果上层业务要用 AI 生成摘要，也应当通过 `SummaryStorePort` 写入摘要，而不是把模型配置塞进 AWBS 底座。如果未来要增加新的 view materializer 或 changeset adapter，也应当先进入 use case 和 adapter 层，而不是把 CLI 写成事实上的系统核心。
+这样，CLI 不直接依赖具体基础设施实现。当前默认索引后端是磁盘 SQLite + FTS5；如果未来要替换成其他嵌入式索引，只需要替换 `IndexStorePort` 的实现。摘要永远由上层业务或外部工具生成，并通过 `SummaryStorePort` 写入 AWBS；模型配置、API 密钥、提示词和业务理解都不进入 AWBS 底座。后续如果增加新的 view materializer、数据库审计或账本机制，也应当先进入 use case 和 port 契约，而不是把 CLI 写成事实上的系统核心。
 
 ## 16. 001 视图鉴权器与鉴权目录总账
 
@@ -663,7 +663,7 @@ files_fts
 
 `awbs index rebuild` 会扫描文件系统数据库，生成或重建 `.awbs/index/files.sqlite`。`awbs index query` 直接查询这个磁盘 SQLite 文件，不再把全量索引加载进内存 SQLite。旧 v0 项目如果存在 `.awbs/index/files.jsonl`，第一次 rebuild 会读取旧 JSONL，用于保留 removed 记录，然后写入新的 SQLite 索引。
 
-摘要不由 AWBS 内置 AI 模型生成。AWBS 是文件系统数据库底座，它不知道业务文件真正意味着什么，因此不应该在底座里配置模型、API 地址或密钥来替业务理解内容。
+摘要不由 AWBS 内置 AI 模型生成，并且这不是临时限制，而是长期边界。AWBS 是文件系统数据库底座，它不知道业务文件真正意味着什么，因此不应该在底座里配置模型、API 地址、API 密钥、提示词或任何业务理解逻辑。
 
 摘要由上层业务应用、外部 agent 或人类工具生成，再通过 AWBS 的摘要接口写入：
 
@@ -697,11 +697,44 @@ awbs summary list [--json]
 - 查询层使用磁盘 SQLite + FTS5 加速。
 - 摘要接口由 AWBS 提供。
 - 摘要内容由业务层负责。
+- AWBS 永远不内置 AI 摘要生成。
 - AI 模型、API 密钥、提示词和业务理解都留在上层应用中。
 
 `.awbs/index/files.sqlite` 是可重建索引，默认不进入 Git。`.awbs/summaries/files.jsonl` 是业务可写的摘要文件，可以进入 Git。
 
-## 18. npm 包形态
+## 18. 003 AWBS 写入账本与数据库审计
+
+Git 的 author、committer、用户名和邮箱不能作为 AWBS 的身份认证依据。它们只是 commit 元数据，任何本地 Git 调用者都可以伪造。因此，AWBS 不能通过“某个 Git 用户名”判断一次写入是否合法。
+
+003 的方向是把 001 的 Authority 扩展成两类正式事实源：
+
+```text
+视图鉴权
+  记录 viewId、readPaths、writePaths、baseCommit 和 workspace 投影事实。
+
+写入账本
+  记录哪些 changeset apply 被 AWBS 接受，并以什么 Git commit 进入数据库。
+```
+
+后续 `changeset apply` 成功时，应当在同一个 Git commit 中写入数据库变更和 sealed ledger entry，并在 commit message 中带上 AWBS trailer。trailer 只是线索，不单独可信；真正可信的是 `.awbs/authority` 下的 sealed ledger 与 Git history 的一致性。
+
+需要注意的是，`resultCommit` 不应该被直接写入同一个 commit 内的账本 entry，因为 commit hash 依赖 commit 内容本身，会形成自引用。正确做法是让 sealed ledger entry 记录 entryId、changesetId、baseCommit、appliedPaths、operationHash 等可提前确定的事实；审计时再从 Git history 推导哪个 commit 包含了这条 entry。
+
+003 还应提供数据库审计和清理能力：
+
+```text
+awbs ledger inspect
+awbs ledger verify
+awbs db audit
+awbs db clean --dry-run
+awbs db clean --restore-head
+```
+
+其中，未提交污染可以被明确清理；已经进入 Git history 的外部 commit 只能被报告或通过显式修复流程处理，不能静默删除或重写历史。
+
+完整任务说明见 `TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md`。
+
+## 19. npm 包形态
 
 AWBS 当前已经具备 npm CLI 包形态。
 
