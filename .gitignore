@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+*.tsbuildinfo
+.awbs/
+*.tgz
+coverage/
+AWBS_USER_DISCUSSION_NOTES.md
+AgentWorkBaseSpace.txt

@@ -1,0 +1,37 @@
+{
+  "name": "awbs",
+  "version": "0.0.1",
+  "description": "Agent Work Base Space CLI prototype for file-system database workspaces.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "awbs": "./src/cli.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a956180462/AWBS.git"
+  },
+  "bugs": {
+    "url": "https://github.com/a956180462/AWBS/issues"
+  },
+  "homepage": "https://github.com/a956180462/AWBS#readme",
+  "keywords": [
+    "agent",
+    "workspace",
+    "filesystem",
+    "git",
+    "cli"
+  ],
+  "files": [
+    "src",
+    "AWBS_CORE_DESIGN.md",
+    "TASK_001_VIEW_AUTHORITY.md"
+  ],
+  "scripts": {
+    "awbs": "node src/cli.ts",
+    "test": "node --test tests/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
