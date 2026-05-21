@@ -55,6 +55,7 @@ init
 - 还没有实现跨机器 authority key 迁移。
 - 还没有实现 workflow/run/step 的完整记录层。
 - 还没有实现 backup purge；003 只保留 backup，不自动删除。
+- 还没有实现 004 中设计的独立 AWBS Authority Service；004 目前是设计文档。
 
 ## 安装与运行
 
@@ -126,6 +127,7 @@ awbs authority repair-mirrors [--json]
 - [AWBS_CORE_DESIGN.md](./AWBS_CORE_DESIGN.md)：核心思想、当前能力、技术架构、索引设计和 npm 包状态。
 - [TASK_001_VIEW_AUTHORITY.md](./TASK_001_VIEW_AUTHORITY.md)：视图鉴权器、密封契约、明文镜像和鉴权目录总账。
 - [TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md](./TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md)：AWBS 可信数据链、数据库审计和可信重建设计。
+- [TASK_004_TRUSTED_AUTHORITY_LAYER.md](./TASK_004_TRUSTED_AUTHORITY_LAYER.md)：可信事实层、hash-linked ledger、Authority Service 和 trust anchor 设计。
 
 ## Development Status
 
@@ -160,6 +162,7 @@ It does not yet provide:
 - Cross-machine authority key migration.
 - Full workflow/run/step history.
 - Backup purge.
+- The standalone AWBS Authority Service designed in 004.
 
 ## English Quick Start
 

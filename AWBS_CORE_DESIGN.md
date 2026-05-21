@@ -767,7 +767,70 @@ awbs changeset apply <changesetId>
 
 完整任务说明见 `TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md`。
 
-## 19. npm 包形态
+## 19. 004 可信事实层与 Authority Service
+
+004 把 003 的可信链继续上升为一个完整的 `Trusted Authority Layer / 可信事实层` 设计。
+
+003 已经实现：
+
+```text
+sealed ledger
+refs/awbs/trusted
+db audit
+clean-rebuild
+```
+
+004 的目标不是引入币、挖矿、P2P 或区块链业务，而是借用 hash-linked ledger 的核心思想：后一条记录承认前一条记录，任何中间篡改都会让后续链条对不上。
+
+AWBS 可信事实层的核心定性是：
+
+```text
+文件系统保存开放内容。
+Git 保存全部历史。
+Trusted Authority Layer 决定 AWBS 承认哪条数据库事实链。
+```
+
+004 设计中，可信链的最小推进单元不是文件，也不是普通 Git commit，而是 `verified operation`。当前最主要的 operation 是 `data changeset apply`，未来还可以包括：
+
+```text
+genesis
+authority update
+view revoke
+summary update
+clean rebuild receipt
+```
+
+每条 ledger entry 应当逐步演化为 hash-linked entry，包含：
+
+```text
+previousEntryHash
+entryHash
+operationHash
+parentTrustedCommit
+currentTrustedCommit
+```
+
+这样 AWBS 不需要阻止别人乱改文件或乱提交 Git；它只需要在验证时拒绝承认对不上可信链的状态。
+
+004 还把 `AWBS Authority Service` 作为下一阶段主方向。CLI 和 agent 不应该持有根信任，只能提交 operation 请求；Authority Service 以独立 OS 身份运行，持有 signer / trust anchor，并且只能提供 `applyVerifiedOperation` 这类语义接口，不能提供 `sign(rawHash)` 这种给任意字符串盖章的接口。
+
+信任锚设计按层级演化：
+
+```text
+Level 0: hash chain only
+Level 1: repo-local sealed key
+Level 2: OS secret store / OS keychain
+Level 3: local Authority Service
+Level 4: remote signer / external append-only checkpoint
+```
+
+004 明确边界：AWBS 要防的是不可信工作流执行者，不承诺对抗已经拥有 admin/root 的主机最高权限者。目标是把普通 agent 绕过可信链的行为，从“改一个文件或 JSON”，提高到“攻击 Authority Service / OS 身份 / signer”。
+
+摘要边界保持不变：AWBS 永远不内置 AI 摘要。可信事实层可以记录 summary update 是否进入可信链，但摘要内容仍然由上层业务生成。
+
+完整任务说明见 `TASK_004_TRUSTED_AUTHORITY_LAYER.md`。
+
+## 20. npm 包形态
 
 AWBS 当前已经具备 npm CLI 包形态。
 
