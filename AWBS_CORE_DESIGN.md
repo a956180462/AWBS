@@ -814,11 +814,16 @@ currentTrustedCommit
 
 004 还把 `AWBS Authority Service` 作为下一阶段主方向。CLI 和 agent 不应该持有根信任，只能提交 operation 请求；Authority Service 以独立 OS 身份运行，持有 signer / trust anchor，并且只能提供 `applyVerifiedOperation` 这类语义接口，不能提供 `sign(rawHash)` 这种给任意字符串盖章的接口。
 
+004 还补充了 `Ephemeral Key Session / 运行期钥匙托管` 作为过渡模式：应用启动时把 key 读入内存并删除磁盘副本，agent 生命周期内无法通过文件系统顺手读取 key；应用收尾时停止可信写入，再把 key 写回持久位置。这要求上层应用正确管理生命周期，如果外部不受控 agent 在 AWBS 未托管 key 时扫全机读取 key 文件，那属于上层应用的 agent 管理边界，不是 AWBS 可以伪装兜底的事情。
+
+AWBS core 的启动也应当被纳入可信事实层：先检测平台和 authority mode，建立 trust anchor 或 authority session，验证 repo authority 和 trusted head，然后才允许可信写入。没有 authority session，就没有可信写入。如果 authority 不可用，系统只能进入只读诊断或不可用状态，不能伪成功推进 trusted chain。
+
 信任锚设计按层级演化：
 
 ```text
 Level 0: hash chain only
 Level 1: repo-local sealed key
+Level 1.5: ephemeral key session
 Level 2: OS secret store / OS keychain
 Level 3: local Authority Service
 Level 4: remote signer / external append-only checkpoint
