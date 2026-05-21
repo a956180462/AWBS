@@ -22,6 +22,7 @@ test("awbs v0 closed loop and read-only violation handling", () => {
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
+    awbs(project, ["ledger", "bootstrap"]);
     const initialHead = git(project, ["rev-parse", "HEAD"]).trim();
 
     awbs(project, ["index", "rebuild"]);
@@ -63,7 +64,7 @@ test("awbs v0 closed loop and read-only violation handling", () => {
   }
 });
 
-test("apply rejects stale base commits", () => {
+test("apply rejects stale view once trusted chain advances", () => {
   const project = mkdtempSync(join(tmpdir(), "awbs-stale-"));
   try {
     awbs(project, ["init"]);
@@ -73,19 +74,23 @@ test("apply rejects stale base commits", () => {
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
+    awbs(project, ["ledger", "bootstrap"]);
 
-    awbs(project, ["view", "create", "--out", "workspace", "--write", "B"]);
-    writeFileSync(join(project, "workspace", "B", "draft.md"), "two\n", "utf8");
-    const collectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace"]);
-    const id = /Changeset collected: (\S+)/.exec(collectOut)?.[1];
-    assert.ok(id);
+    awbs(project, ["view", "create", "--out", "workspace-old", "--write", "B"]);
+    writeFileSync(join(project, "workspace-old", "B", "draft.md"), "old view edit\n", "utf8");
+    const oldCollectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace-old"]);
+    const oldId = /Changeset collected: (\S+)/.exec(oldCollectOut)?.[1];
+    assert.ok(oldId);
 
-    writeFileSync(join(project, "B", "other.md"), "parallel\n", "utf8");
-    git(project, ["add", "."]);
-    git(project, ["commit", "-m", "parallel"]);
+    awbs(project, ["view", "create", "--out", "workspace-new", "--write", "B"]);
+    writeFileSync(join(project, "workspace-new", "B", "draft.md"), "new trusted edit\n", "utf8");
+    const newCollectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace-new"]);
+    const newId = /Changeset collected: (\S+)/.exec(newCollectOut)?.[1];
+    assert.ok(newId);
+    awbs(project, ["changeset", "apply", newId, "--adapter", "same-path"]);
 
-    const result = awbsFail(project, ["changeset", "apply", id, "--adapter", "same-path"]);
-    assert.match(result.stderr, /Base commit mismatch/);
+    const result = awbsFail(project, ["changeset", "apply", oldId, "--adapter", "same-path"]);
+    assert.match(result.stderr, /Stale view/);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
@@ -100,11 +105,15 @@ test("index rebuild keeps removed entries", () => {
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
+    awbs(project, ["ledger", "bootstrap"]);
 
     awbs(project, ["index", "rebuild"]);
-    rmSync(join(project, "note.md"));
-    git(project, ["add", "-A"]);
-    git(project, ["commit", "-m", "remove note"]);
+    awbs(project, ["view", "create", "--out", "workspace-remove", "--write", "note.md"]);
+    rmSync(join(project, "workspace-remove", "note.md"));
+    const collectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace-remove"]);
+    const changesetId = /Changeset collected: (\S+)/.exec(collectOut)?.[1];
+    assert.ok(changesetId);
+    awbs(project, ["changeset", "apply", changesetId]);
     awbs(project, ["index", "rebuild"]);
 
     const removed = awbs(project, ["index", "query", "note.md", "--status", "removed", "--json"]);
@@ -138,6 +147,7 @@ test("index rebuild migrates legacy JSONL removed entries into disk sqlite", () 
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
+    awbs(project, ["ledger", "bootstrap"]);
 
     awbs(project, ["index", "rebuild"]);
     assert.ok(existsSync(join(project, ".awbs", "index", "files.sqlite")));
@@ -160,6 +170,7 @@ test("index query uses persistent sqlite, FTS summary search, path search, and s
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
+    awbs(project, ["ledger", "bootstrap"]);
 
     awbs(project, ["summary", "set", "scene-001.md", "--text", "unique semantic beacon"]);
     awbs(project, ["index", "rebuild"]);
@@ -188,6 +199,7 @@ test("external summaries are written through AWBS and used by index rebuild", ()
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
+    awbs(project, ["ledger", "bootstrap"]);
 
     awbs(project, ["summary", "set", "note.md", "--text", "Business-owned note summary"]);
     const getSummary = awbs(project, ["summary", "get", "note.md"]);

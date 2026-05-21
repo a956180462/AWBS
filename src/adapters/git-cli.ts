@@ -25,6 +25,25 @@ export class GitCliAdapter implements GitPort {
     return commit;
   }
 
+  refCommit(root: string, ref: string): string | null {
+    const result = this.runResult(["rev-parse", "--verify", ref], root);
+    return result.status === 0 ? result.stdout.trim() : null;
+  }
+
+  updateRef(root: string, ref: string, commit: string): void {
+    this.run(["update-ref", ref, commit], root);
+  }
+
+  isAncestor(root: string, ancestor: string, descendant: string): boolean {
+    const result = this.runResult(["merge-base", "--is-ancestor", ancestor, descendant], root);
+    return result.status === 0;
+  }
+
+  revList(root: string, range: string): string[] {
+    const output = this.run(["rev-list", "--reverse", range], root).trim();
+    return output ? output.split(/\r?\n/) : [];
+  }
+
   statusPorcelain(root: string): string {
     return this.run(["status", "--porcelain"], root);
   }
@@ -35,6 +54,23 @@ export class GitCliAdapter implements GitPort {
 
   commit(root: string, message: string): void {
     this.run(["commit", "-m", message], root);
+  }
+
+  createDetachedWorktree(root: string, path: string, commit: string): void {
+    this.run(["worktree", "add", "--detach", path, commit], root);
+  }
+
+  removeWorktree(root: string, path: string): void {
+    this.run(["worktree", "remove", "--force", path], root);
+  }
+
+  cloneAtCommit(sourceRoot: string, destination: string, commit: string): void {
+    this.run(["clone", "--no-checkout", "--no-hardlinks", sourceRoot, destination], sourceRoot);
+    const sourceRemote = this.runResult(["remote", "get-url", "origin"], sourceRoot);
+    if (sourceRemote.status === 0 && sourceRemote.stdout.trim()) {
+      this.run(["remote", "set-url", "origin", sourceRemote.stdout.trim()], destination);
+    }
+    this.run(["checkout", "--detach", commit], destination);
   }
 
   diffNoIndex(baselineRoot: string, workspacePath: string): string {

@@ -1,4 +1,4 @@
-import type { AuthorityCatalog, AuthorityRepairReport, AuthorityVerifyReport, AuthorityViewContract } from "../domain/authority-types.ts";
+import type { AuthorityCatalog, AuthorityLedger, AuthorityLedgerEntry, AuthorityRepairReport, AuthorityVerifyReport, AuthorityViewContract } from "../domain/authority-types.ts";
 
 export interface AuthorityPort {
   ensureInitialized(root: string): void;
@@ -8,4 +8,8 @@ export interface AuthorityPort {
   verify(root: string): AuthorityVerifyReport;
   repairMirrors(root: string): AuthorityRepairReport;
   readCatalog(root: string): AuthorityCatalog;
+  hasLedger(root: string): boolean;
+  bootstrapLedger(root: string, parentTrustedCommit: string): AuthorityLedger;
+  readLedger(root: string): AuthorityLedger;
+  appendLedgerEntry(root: string, entry: AuthorityLedgerEntry): AuthorityLedger;
 }

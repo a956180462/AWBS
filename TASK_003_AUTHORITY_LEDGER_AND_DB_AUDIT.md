@@ -1,50 +1,50 @@
-# AWBS 003：AWBS 写入账本与数据库审计
+# AWBS 003：可信数据链与可信重建
 
 ## Summary
 
-003 的目标是把 001 的视图鉴权器继续扩展为 AWBS 自己的写入事实源。
+003 的核心不是“清理 Git 脏提交”，而是建立 **AWBS Trusted Chain / AWBS 可信数据链**。
 
-Git 的 author、committer、用户名和邮箱都只是 commit 元数据，不是 AWBS 可以信任的身份认证。任何能在本地执行 Git 的人或程序，都可以伪造某个用户名提交。因此，AWBS 不能通过 Git 用户名判断“这是不是合法 AWBS 写入”。
+AWBS 认证数据库不再等于普通 Git `HEAD`，也不等于当前工作区文件。AWBS 认证数据库只等于可信链头对应的 Git tree。
 
-003 要建立一套 AWBS 自己承认的账本：
+可信链规则是：
 
 ```text
-changeset apply
-  -> 校验 sealed view contract
-  -> 写入数据库文件
-  -> 写入 sealed ledger entry
-  -> 生成 Git commit
-  -> 后续 audit 能证明这个 commit 是 AWBS apply 产生的
+trustedCommit(Tn)
+  -> view projection 基于 Tn
+  -> changeset 声明基于 Tn
+  -> apply 只把 changeset 写入 Tn
+  -> 生成 trustedCommit(Tn+1)
 ```
 
-它的核心作用是：
-
-- 记录哪些数据库变更是通过 AWBS changeset apply 落地的。
-- 识别哪些 Git commit 是外部直接提交的。
-- 识别哪些 commit 声称自己来自 AWBS、但账本或 authority 对不上的伪造记录。
-- 为后续数据库污染审计和清理提供事实依据。
-
-003 仍然不是沙箱，也不试图阻止一个有本地权限的人直接修改文件或执行 Git。它做的是：**AWBS 永远不承认绕过 changeset 和 authority ledger 的写入是合法 AWBS 写入。**
+任何不来自 AWBS `changeset apply` 的提交、文件写入或 Git 操作，都不会自动进入 AWBS 可信链。它们可以被 `db audit` 报告，也可以通过可信重建排除，但 AWBS 不承认它们是认证数据库的一部分。
 
 ## Design Position
 
-001 的 Authority 有两个职责：
+003 后，AWBS 的数据库事实源分成两层：
 
 ```text
-视图鉴权
-  记录 viewId、readPaths、writePaths、baseCommit 和 workspace 投影事实。
+Git repository
+  保存所有普通 Git 对象、提交、分支和工作区状态。
 
-写入账本
-  记录哪些 changeset apply 被 AWBS 接受，并以什么 Git commit 进入数据库。
+AWBS trusted chain
+  只保存 AWBS 承认的数据库状态推进链。
 ```
 
-这两件事应该在同一个 authority 体系下，因为它们共同回答一个问题：
+Git 仍然是底层版本管理器，但 Git 当前 `HEAD` 只是普通工作状态，不再自动代表 AWBS 数据库状态。
+
+AWBS 当前认证数据库头由两部分共同确定：
 
 ```text
-什么东西被 AWBS 认为是正式、可追溯、可验证的数据库状态变化？
+.awbs/authority/ledger.seal.json
+refs/awbs/trusted
 ```
 
-Git 仍然是底层版本管理器，但 AWBS 的正式写入事实源不能只依赖 Git commit metadata。
+其中：
+
+- `ledger.seal.json` 是 sealed trusted ledger。
+- `ledger.mirror.json` 是给人看的明文镜像，可重建，不作为事实源。
+- `ledger-events.jsonl` 是诊断事件日志。
+- `refs/awbs/trusted` 指向当前 AWBS 认证数据库头。
 
 ## Why Git User Is Not Enough
 
@@ -70,11 +70,11 @@ git -c user.name="A" -c user.email="a@example.com" commit -m "..."
 - GitHub 登录身份只能说明谁 push 了 commit，不等于 commit author 可信。
 - signed commit 可以提高外部身份可信度，但不等于 AWBS 写入流程可信。
 
-AWBS 需要自己的账本，而不是把 Git 用户名当权限系统。
+AWBS 需要自己的可信数据链，而不是把 Git 用户名当权限系统。
 
 ## Authority Ledger Layout
 
-003 建议新增：
+003 增加：
 
 ```text
 .awbs/
@@ -84,16 +84,6 @@ AWBS 需要自己的账本，而不是把 Git 用户名当权限系统。
     ledger-events.jsonl
 ```
 
-其中：
-
-- `ledger.seal.json` 是 AWBS 信任的密封账本。
-- `ledger.mirror.json` 是给人看的明文镜像，可自动重建，不作为事实源。
-- `ledger-events.jsonl` 是追加事件日志，用于诊断和恢复；最终事实仍以 sealed ledger 为准。
-
-`ledger.mirror.json` 被人手改了没有意义。系统运行时必须从 `ledger.seal.json` 解密和认证账本，并在必要时重建 mirror。
-
-## Ledger Contract
-
 密封账本解密后包含：
 
 ```json
@@ -101,6 +91,9 @@ AWBS 需要自己的账本，而不是把 Git 用户名当权限系统。
   "schemaVersion": 1,
   "repoId": "uuid",
   "ledgerVersion": 1,
+  "createdAt": "iso time",
+  "updatedAt": "iso time",
+  "headEntryId": "uuid",
   "entries": [],
   "ext": {}
 }
@@ -112,77 +105,86 @@ AWBS 需要自己的账本，而不是把 Git 用户名当权限系统。
 {
   "schemaVersion": 1,
   "entryId": "uuid",
+  "kind": "bootstrap | changeset",
+  "parentTrustedCommit": "git commit",
+  "baseCommit": "git commit",
   "changesetId": "changeset_xxx",
   "viewId": "uuid",
-  "baseCommit": "git commit before apply",
   "createdAt": "iso time",
   "appliedPaths": [],
   "changesetManifestHash": "sha256:...",
   "authorityContractHash": "sha256:...",
   "operationHash": "sha256:...",
-  "commitTrailers": {
-    "AWBS-Ledger-Entry": "uuid",
-    "AWBS-Operation-Hash": "sha256:..."
-  },
   "ext": {}
 }
 ```
 
-注意：`resultCommit` 不应直接写进同一个 commit 内的 sealed ledger entry。原因是 Git commit hash 由 commit 内容决定；如果账本文件中预先写入 result commit hash，会形成自引用。
+`resultCommit` 不写进同一个 sealed entry。原因是 Git commit hash 由 commit 内容决定，如果账本文件里预先写入 result commit hash，会形成自引用。
 
-003 的正确策略是：
+当前实现的策略是：
 
 ```text
 sealed ledger entry
-  记录 entryId、changesetId、baseCommit、appliedPaths、operationHash 等可提前确定的事实。
+  记录可提前确定的操作事实。
 
 Git commit trailer
   记录 AWBS-Ledger-Entry 和 AWBS-Operation-Hash。
 
-audit 阶段
-  扫描 Git history，找到包含对应 ledger entry 和 trailer 的 commit。
-  resultCommit 是审计推导结果，不是 sealed entry 内部的自引用字段。
+refs/awbs/trusted
+  指向包含最新 sealed ledger entry 的认证数据库提交。
 ```
 
-## Commit Trailer
+## Bootstrap
 
-AWBS apply 生成的 commit message 可以包含：
+003 新增：
 
 ```text
-awbs: apply <changesetId>
-
-AWBS-Ledger-Entry: <entryId>
-AWBS-Changeset: <changesetId>
-AWBS-View: <viewId>
-AWBS-Operation-Hash: sha256:<hash>
+awbs ledger bootstrap
 ```
 
-这些 trailer 不是单独可信的。它们只是 Git history 中的可读线索。系统真正验证时必须同时检查：
+bootstrap 要求当前 Git `HEAD` 存在，并创建第一条可信链记录。
 
-- commit 中是否包含对应的 sealed ledger 更新。
-- sealed ledger 是否能通过 authority key 解密和认证。
-- ledger entry 的 `operationHash` 是否匹配 changeset、view contract 和 applied paths。
-- commit 的 parent 是否等于 entry 记录的 `baseCommit`。
+这一步会：
 
-如果 trailer 存在但 sealed ledger 不匹配，应判定为伪造或损坏。
+1. 读取当前 Git `HEAD` 作为 `parentTrustedCommit`。
+2. 写入第一份 sealed ledger。
+3. 创建一个 AWBS bootstrap commit。
+4. 将 `refs/awbs/trusted` 指向 bootstrap commit。
 
-## Apply Behavior
+从这一刻开始，AWBS 数据库头不再由普通 `HEAD` 决定，而由 `refs/awbs/trusted` 决定。
 
-003 后，`changeset apply` 成功条件应包括：
+## View / Index / Apply Behavior
 
-- authority verify 通过。
-- view contract 未被 revoke。
-- changeset valid。
-- 没有只读路径修改。
-- 当前 Git HEAD 等于 sealed contract 的 `baseCommit`。
-- 工作树干净。
-- 将数据库变更和 sealed ledger 更新放进同一个 Git commit。
+003 后，核心流程变成：
 
-如果数据库文件已经写入但账本无法写入，不能伪装成功。实现时应尽量在 commit 前完成所有可验证材料的准备；任何中途失败都必须留下明确诊断。
+```text
+view create
+  从 currentTrustedCommit 的 Git tree 投影文件。
+  不读取当前污染工作区。
 
-## Audit
+index rebuild
+  扫描 currentTrustedCommit 的 Git tree。
+  不把当前工作区污染文件写入索引。
 
-003 建议新增：
+changeset collect
+  比较 view baseline 和 workspace 当前状态。
+  changeset.baseCommit 来自 sealed view contract。
+
+changeset apply
+  只接受 baseCommit 等于 currentTrustedCommit 的 valid changeset。
+  只读路径违规永远拒绝。
+  成功后写入业务文件变化、sealed ledger entry，并推进 refs/awbs/trusted。
+```
+
+如果当前工作区干净且 `HEAD` 正好等于 currentTrustedCommit，apply 可以在当前工作区原地提交，方便普通使用。
+
+如果当前 Git `HEAD` 已经被外部 commit 推走，AWBS 不在外部 commit 上继续生长。apply 会基于 currentTrustedCommit 的临时 worktree 生成新的可信提交，并推进 `refs/awbs/trusted`。外部 commit 仍然留在 Git 里，但不进入 AWBS 认证数据库。
+
+旧 view 基于旧 trusted commit。可信链推进后，旧 view 的 apply 会被拒绝；要继续工作，必须从新的 currentTrustedCommit 重新创建 view。
+
+## Database Audit
+
+003 新增：
 
 ```text
 awbs ledger inspect [--json]
@@ -190,88 +192,77 @@ awbs ledger verify [--json]
 awbs db audit [--json]
 ```
 
-`ledger verify` 检查：
+`ledger inspect` / `ledger verify` 检查：
 
-- `ledger.seal.json` 是否可解密。
-- mirror 是否与 sealed ledger 一致。
-- 每条 entry 是否字段完整。
-- entry 是否能在 Git history 中找到对应 commit。
-- 对应 commit 的 trailer、parent、applied paths 是否匹配。
+- `refs/awbs/trusted` 是否存在。
+- trusted commit 中的 sealed ledger 是否可解密。
+- ledger head entry 是否存在。
 
 `db audit` 检查：
 
+- 当前 Git `HEAD` 是否等于 currentTrustedCommit。
+- 当前 `HEAD` 是否偏离 AWBS trusted chain。
 - 当前工作树是否有未提交变化。
-- 当前工作树是否有 untracked 文件。
-- Git history 中是否存在没有 AWBS ledger entry 的外部 commit。
-- 是否存在伪造 AWBS trailer 但账本不匹配的 commit。
-- `.awbs/authority` 是否被破坏。
+- authority / ledger 是否可验证。
 
-## Cleanup
+审计的语义不是“阻止 Git”，而是明确告诉用户：哪些内容属于 AWBS 认证数据库，哪些只是普通 Git 或文件系统状态。
 
-003 可以提供清理能力，但必须区分未提交污染和已提交历史。
+## Trusted Rebuild
 
-未提交污染：
+003 新增：
 
 ```text
-awbs db clean --dry-run
-awbs db clean --restore-head
+awbs db clean-rebuild [--json]
+awbs db backups list [--json]
 ```
 
-默认必须是 dry-run，只报告会恢复哪些 tracked 文件、会删除哪些 untracked 文件。真正删除或恢复必须由显式参数触发。
-
-已提交外部 commit：
+`clean-rebuild` 不在污染目录里做复杂递归删除。它采用更稳的方式：
 
 ```text
-awbs db audit
+1. 读取 currentTrustedCommit。
+2. 从该 commit 克隆/检出一个干净数据库目录。
+3. 复制 .awbs/private/local.json，保证新目录能解密 authority。
+4. 验证新目录 authority / ledger。
+5. 将原数据库目录改名为 <name>.backup-<timestamp>。
+6. 将干净目录改名接管原数据库路径。
 ```
 
-只报告，不静默删除，不重写历史。未来如果需要修复，应生成显式的 revert/repair changeset 或要求人工处理。
+旧目录默认保留，不自动删除。003 不实现 purge。
 
-设计原则：
+这样清理不会在污染现场逐个删除文件，也不会试图理解所有软链接、临时文件或外部写入。AWBS 只从自己的可信链头重建一个干净数据库。
+
+## Current CLI
+
+003 后新增命令：
 
 ```text
-能自动发现污染。
-不能静默删除历史。
-不能把清理失败伪装成成功。
+awbs ledger bootstrap [--json]
+awbs ledger inspect [--json]
+awbs ledger verify [--json]
+awbs db audit [--json]
+awbs db clean-rebuild [--json]
+awbs db backups list [--json]
 ```
 
-## Workspace Cleanup
+基本流程变为：
 
-workspace 污染和数据库污染不是一回事。
+```powershell
+awbs init
+git add .
+git commit -m "initialize database"
+awbs ledger bootstrap
 
-当前 collect 已经可以发现 workspace 中只读路径或非授权路径的变化，并把 changeset 标记为 invalid。后续可以增加：
-
-```text
-awbs workspace audit --workspace <path>
-awbs workspace clean --workspace <path> --dry-run
-awbs workspace clean --workspace <path> --restore-baseline
+awbs view create --out workspace --read A --write B
+awbs changeset collect --workspace workspace
+awbs changeset apply <changesetId>
 ```
 
-workspace clean 的语义是：根据 sealed view contract 和 baseline，把工作空间恢复到 view 创建时的状态。它不影响数据库，不影响 Git history。
+## Boundaries
 
-## Test Plan
-
-新增测试应覆盖：
-
-- Git author/committer 不参与 AWBS 合法性判断。
-- apply 成功后生成 sealed ledger entry。
-- apply commit 带 AWBS trailer。
-- `ledger verify` 能找到对应 Git commit。
-- 伪造 trailer 但没有 sealed ledger entry 时，audit 报告伪造。
-- 直接手写 Git commit 时，audit 报告 external commit。
-- 修改 `ledger.mirror.json` 后可从 sealed ledger 修复。
-- 修改 `ledger.seal.json` 后，verify 失败。
-- 未提交数据库污染可被 `db audit` 发现。
-- `db clean --dry-run` 不改变文件。
-- `db clean --restore-head` 只在显式参数下恢复未提交污染。
-- 已提交外部 commit 不被自动删除。
-
-## Assumptions
-
-- 003 不实现强安全隔离。
-- 003 不信任 Git 用户名或邮箱。
-- 003 不要求 signed commit。
-- 003 不重写 Git 历史。
-- 003 不静默删除用户数据。
-- 003 不处理 npm 供应链治理。
-- 003 只把 AWBS 自己承认的写入路径记录为可验证事实。
+- 003 不实现强安全沙箱。
+- 003 不阻止本地用户直接修改文件或直接 Git commit。
+- 003 只是不承认这些绕过 AWBS 的写入属于 AWBS 认证数据库。
+- 已提交外部历史不静默删除、不重写。
+- 清理核心采用可信重建和目录替换，不采用精细递归删除。
+- 备份目录删除后续另做显式 purge 任务，003 不做自动删除。
+- 摘要仍然永远由上层写入，AWBS 不内置 AI 摘要。

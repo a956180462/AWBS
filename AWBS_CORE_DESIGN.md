@@ -702,35 +702,68 @@ awbs summary list [--json]
 
 `.awbs/index/files.sqlite` 是可重建索引，默认不进入 Git。`.awbs/summaries/files.jsonl` 是业务可写的摘要文件，可以进入 Git。
 
-## 18. 003 AWBS 写入账本与数据库审计
+## 18. 003 可信数据链与可信重建
 
-Git 的 author、committer、用户名和邮箱不能作为 AWBS 的身份认证依据。它们只是 commit 元数据，任何本地 Git 调用者都可以伪造。因此，AWBS 不能通过“某个 Git 用户名”判断一次写入是否合法。
+003 后，AWBS 的认证数据库不再等于普通 Git `HEAD`，也不等于当前工作区文件。AWBS 认证数据库只等于可信链头对应的 Git tree。
 
-003 的方向是把 001 的 Authority 扩展成两类正式事实源：
-
-```text
-视图鉴权
-  记录 viewId、readPaths、writePaths、baseCommit 和 workspace 投影事实。
-
-写入账本
-  记录哪些 changeset apply 被 AWBS 接受，并以什么 Git commit 进入数据库。
-```
-
-后续 `changeset apply` 成功时，应当在同一个 Git commit 中写入数据库变更和 sealed ledger entry，并在 commit message 中带上 AWBS trailer。trailer 只是线索，不单独可信；真正可信的是 `.awbs/authority` 下的 sealed ledger 与 Git history 的一致性。
-
-需要注意的是，`resultCommit` 不应该被直接写入同一个 commit 内的账本 entry，因为 commit hash 依赖 commit 内容本身，会形成自引用。正确做法是让 sealed ledger entry 记录 entryId、changesetId、baseCommit、appliedPaths、operationHash 等可提前确定的事实；审计时再从 Git history 推导哪个 commit 包含了这条 entry。
-
-003 还应提供数据库审计和清理能力：
+这条可信链由 `.awbs/authority/ledger.seal.json` 和 Git ref `refs/awbs/trusted` 共同表达：
 
 ```text
-awbs ledger inspect
-awbs ledger verify
-awbs db audit
-awbs db clean --dry-run
-awbs db clean --restore-head
+trustedCommit(Tn)
+  -> view projection 基于 Tn
+  -> changeset 声明基于 Tn
+  -> apply 只把 changeset 写入 Tn
+  -> 生成 trustedCommit(Tn+1)
 ```
 
-其中，未提交污染可以被明确清理；已经进入 Git history 的外部 commit 只能被报告或通过显式修复流程处理，不能静默删除或重写历史。
+Git 的 author、committer、用户名和邮箱不能作为 AWBS 的身份认证依据。它们只是 commit 元数据，任何本地 Git 调用者都可以伪造。因此，AWBS 不通过“某个 Git 用户名”判断一次写入是否合法，而是通过自己的 sealed ledger 和 trusted ref 判断哪些提交属于 AWBS 认证数据库。
+
+003 新增：
+
+```text
+.awbs/authority/ledger.seal.json
+.awbs/authority/ledger.mirror.json
+.awbs/authority/ledger-events.jsonl
+refs/awbs/trusted
+```
+
+`ledger.seal.json` 是 AWBS 信任的密封账本；`ledger.mirror.json` 是给人看的明文镜像，可自动重建，不作为事实源；`refs/awbs/trusted` 指向当前 AWBS 认证数据库头。
+
+003 的 CLI 增加：
+
+```text
+awbs ledger bootstrap [--json]
+awbs ledger inspect [--json]
+awbs ledger verify [--json]
+awbs db audit [--json]
+awbs db clean-rebuild [--json]
+awbs db backups list [--json]
+```
+
+基本使用流程变为：
+
+```text
+awbs init
+git add .
+git commit -m "initialize database"
+awbs ledger bootstrap
+
+awbs view create --out workspace --read A --write B
+awbs changeset collect --workspace workspace
+awbs changeset apply <changesetId>
+```
+
+003 改变了几个核心流程的事实源：
+
+- `view create` 从 currentTrustedCommit 的 Git tree 投影文件，不读取当前污染工作区。
+- `index rebuild` 扫描 currentTrustedCommit 的 Git tree，不把当前工作区污染文件写入索引。
+- `changeset apply` 只接受 baseCommit 等于 currentTrustedCommit 的 valid changeset。
+- apply 成功后写入业务文件变化、sealed ledger entry，并推进 `refs/awbs/trusted`。
+- 外部 Git commit 可以存在，但不会自动进入 AWBS 可信链。
+
+如果当前工作区干净且 `HEAD` 正好等于 currentTrustedCommit，apply 可以在当前工作区原地提交，方便普通使用。如果当前 Git `HEAD` 已经被外部 commit 推走，AWBS 不在外部 commit 上继续生长；apply 会基于 currentTrustedCommit 的临时 worktree 生成新的可信提交，并推进 `refs/awbs/trusted`。
+
+数据库清理也不再采用“在污染目录里逐个删除”的方式。`awbs db clean-rebuild` 会从 currentTrustedCommit 重建一个干净目录，把原数据库目录整体改名为 `<name>.backup-<timestamp>`，再让干净目录接管原路径。旧目录默认保留，不自动删除。
 
 完整任务说明见 `TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md`。
 

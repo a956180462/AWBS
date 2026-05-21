@@ -19,6 +19,12 @@ test("runtime creates default use case groups", () => {
   assert.equal(typeof runtime.usecases.changeset.applyChangeset, "function");
   assert.equal(typeof runtime.usecases.authority.verifyAuthority, "function");
   assert.equal(typeof runtime.usecases.authority.repairMirrors, "function");
+  assert.equal(typeof runtime.usecases.ledger.bootstrapLedger, "function");
+  assert.equal(typeof runtime.usecases.ledger.inspectLedger, "function");
+  assert.equal(typeof runtime.usecases.ledger.verifyLedger, "function");
+  assert.equal(typeof runtime.usecases.db.auditDatabase, "function");
+  assert.equal(typeof runtime.usecases.db.cleanRebuild, "function");
+  assert.equal(typeof runtime.usecases.db.listBackups, "function");
 });
 
 test("cli depends on runtime, not concrete infrastructure adapters", () => {

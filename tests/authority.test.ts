@@ -134,6 +134,7 @@ function seedProject(project: string): void {
   git(project, ["config", "user.name", "AWBS Test"]);
   git(project, ["add", "."]);
   git(project, ["commit", "-m", "initial"]);
+  awbs(project, ["ledger", "bootstrap"]);
 }
 
 function awbs(cwd: string, args: string[]): string {

@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { join, relative, resolve } from "node:path";
-import { VIEW_MANIFEST } from "../domain/constants.ts";
+import { VIEW_MANIFEST, TRUSTED_REF } from "../domain/constants.ts";
 import { AwbsError } from "../domain/errors.ts";
+import { contentHash } from "../domain/hash.ts";
 import { assertSafeRelativePath, filterIgnoredStatus, fromPosixPath, isPathUnderAny, makeId, toPosixPath } from "../domain/paths.ts";
 import type { ChangeKind, ChangeRecord, ChangesetManifest, ViewManifest } from "../domain/types.ts";
 import type { AuthorityPort } from "../ports/authority.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { GitPort } from "../ports/git.ts";
+import { copyCurrentAuthorityMaterial, requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
 
 export type ChangesetUseCases = {
   collectChangeset(cwd: string, workspaceInput: string): ChangesetManifest;
@@ -124,43 +127,76 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
         throw new AwbsError(`Changeset ${manifest.changesetId} modifies read-only path(s) and cannot be applied.`);
       }
 
-      const head = deps.git.requireHeadCommit(root);
-      if (head !== contract.baseCommit) {
-        throw new AwbsError(`Base commit mismatch. Current HEAD is ${head}, changeset base is ${contract.baseCommit}.`);
+      if (manifest.baseCommit !== contract.baseCommit) {
+        throw new AwbsError(`Changeset base ${manifest.baseCommit} does not match sealed view contract base ${contract.baseCommit}.`);
+      }
+
+      const currentTrustedCommit = requireTrustedCommit(deps.git, root);
+      if (contract.baseCommit !== currentTrustedCommit) {
+        throw new AwbsError(`Stale view. Current trusted commit is ${currentTrustedCommit}, changeset base is ${contract.baseCommit}. Create a new view from the current trusted database.`);
       }
 
       const workspaceRel = toPosixPath(relative(root, manifest.workspacePath));
       const dirty = filterIgnoredStatus(deps.git.statusPorcelain(root), root, [workspaceRel, ".awbs/authority"]);
-      if (dirty.trim().length > 0) {
-        throw new AwbsError(`Working tree is not clean:\n${dirty}`);
-      }
-
-      const appliedPaths: string[] = [];
-      for (const change of manifest.changes) {
-        if (!change.allowed) {
-          continue;
+      const head = deps.git.headCommit(root);
+      const canApplyInPlace = head === currentTrustedCommit && dirty.trim().length === 0;
+      const applyTargetRoot = canApplyInPlace ? root : null;
+      const applyInTarget = (targetRoot: string): { commit: string | null; applied: number } => {
+        if (targetRoot !== root) {
+          copyCurrentAuthorityMaterial(root, targetRoot);
         }
-        assertSafeRelativePath(change.path);
-        const target = join(root, fromPosixPath(change.path));
-        if (change.kind === "delete") {
-          deps.files.removePath(target);
-        } else {
-          if (!change.file) {
-            throw new AwbsError(`Missing file payload for ${change.path}`);
-          }
-          const payload = join(changesetRoot, fromPosixPath(change.file));
-          deps.files.copyPath(payload, target);
+        const appliedPaths = applyFilesToTarget(deps, changesetRoot, manifest, targetRoot);
+        if (appliedPaths.length === 0) {
+          return { commit: null, applied: 0 };
         }
-        appliedPaths.push(change.path);
+
+        const ledgerEntry = {
+          schemaVersion: 1,
+          entryId: randomUUID(),
+          kind: "changeset",
+          parentTrustedCommit: currentTrustedCommit,
+          baseCommit: contract.baseCommit,
+          changesetId: manifest.changesetId,
+          viewId: manifest.viewId,
+          createdAt: new Date().toISOString(),
+          appliedPaths,
+          changesetManifestHash: contentHash(manifest),
+          authorityContractHash: contentHash(contract),
+          operationHash: contentHash({
+            kind: "changeset",
+            parentTrustedCommit: currentTrustedCommit,
+            baseCommit: contract.baseCommit,
+            changesetId: manifest.changesetId,
+            viewId: manifest.viewId,
+            appliedPaths,
+            changesetManifestHash: contentHash(manifest),
+            authorityContractHash: contentHash(contract)
+          }),
+          ext: {}
+        } as const;
+
+        deps.authority.appendLedgerEntry(targetRoot, ledgerEntry);
+        deps.git.addAll(targetRoot, [...appliedPaths.map(fromPosixPath), ".awbs/authority"]);
+        deps.git.commit(
+          targetRoot,
+          [
+            `awbs: apply ${manifest.changesetId}`,
+            "",
+            `AWBS-Ledger-Entry: ${ledgerEntry.entryId}`,
+            `AWBS-Operation-Hash: ${ledgerEntry.operationHash}`,
+            `AWBS-Parent-Trusted-Commit: ${currentTrustedCommit}`
+          ].join("\n")
+        );
+        const nextTrustedCommit = deps.git.requireHeadCommit(targetRoot);
+        deps.git.updateRef(root, TRUSTED_REF, nextTrustedCommit);
+        return { commit: nextTrustedCommit, applied: appliedPaths.length };
+      };
+
+      if (applyTargetRoot) {
+        return applyInTarget(applyTargetRoot);
       }
 
-      if (appliedPaths.length === 0) {
-        return { commit: null, applied: 0 };
-      }
-
-      deps.git.addAll(root, [...appliedPaths.map(fromPosixPath), ".awbs/authority"]);
-      deps.git.commit(root, `awbs: apply ${manifest.changesetId}`);
-      return { commit: deps.git.requireHeadCommit(root), applied: appliedPaths.length };
+      return withTrustedWorktree(deps, root, currentTrustedCommit, "awbs-apply-", applyInTarget);
     },
 
     formatChangesetSummary(manifest: ChangesetManifest): string {
@@ -205,6 +241,33 @@ function classifyChange(hasBefore: boolean, beforeSha: string | null, hasAfter: 
     return "modify";
   }
   return null;
+}
+
+function applyFilesToTarget(
+  deps: { files: FileDatabasePort },
+  changesetRoot: string,
+  manifest: ChangesetManifest,
+  targetRoot: string
+): string[] {
+  const appliedPaths: string[] = [];
+  for (const change of manifest.changes) {
+    if (!change.allowed) {
+      continue;
+    }
+    assertSafeRelativePath(change.path);
+    const target = join(targetRoot, fromPosixPath(change.path));
+    if (change.kind === "delete") {
+      deps.files.removePath(target);
+    } else {
+      if (!change.file) {
+        throw new AwbsError(`Missing file payload for ${change.path}`);
+      }
+      const payload = join(changesetRoot, fromPosixPath(change.file));
+      deps.files.copyPath(payload, target);
+    }
+    appliedPaths.push(change.path);
+  }
+  return appliedPaths;
 }
 
 function resolveChangesetPath(files: FileDatabasePort, cwd: string, input: string): string {

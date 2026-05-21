@@ -5,8 +5,10 @@ import { SealedAuthorityAdapter } from "./adapters/sealed-authority.ts";
 import { SqliteIndexStoreAdapter } from "./adapters/sqlite-index-store.ts";
 import { createAuthorityUseCases, type AuthorityUseCases } from "./usecases/authority.ts";
 import { createChangesetUseCases, type ChangesetUseCases } from "./usecases/changeset.ts";
+import { createDbUseCases, type DbUseCases } from "./usecases/db.ts";
 import { createIndexUseCases, type IndexUseCases } from "./usecases/index.ts";
 import { createInitUseCases, type InitUseCases } from "./usecases/init.ts";
+import { createLedgerUseCases, type LedgerUseCases } from "./usecases/ledger.ts";
 import { createViewUseCases, type ViewUseCases } from "./usecases/view.ts";
 
 export type AwbsRuntime = {
@@ -16,6 +18,8 @@ export type AwbsRuntime = {
     view: ViewUseCases;
     changeset: ChangesetUseCases;
     authority: AuthorityUseCases;
+    ledger: LedgerUseCases;
+    db: DbUseCases;
   };
 };
 
@@ -32,7 +36,9 @@ export function createDefaultRuntime(): AwbsRuntime {
       index: createIndexUseCases({ files, git, index, summaries }),
       view: createViewUseCases({ files, git, authority }),
       changeset: createChangesetUseCases({ files, git, authority }),
-      authority: createAuthorityUseCases({ files, authority })
+      authority: createAuthorityUseCases({ files, authority }),
+      ledger: createLedgerUseCases({ files, git, authority }),
+      db: createDbUseCases({ files, git, authority })
     }
   };
 }

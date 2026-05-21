@@ -8,6 +8,7 @@ import type { IndexKind, ViewManifest } from "../domain/types.ts";
 import type { AuthorityPort } from "../ports/authority.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { GitPort } from "../ports/git.ts";
+import { requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
 
 export type ViewUseCases = {
   createView(cwd: string, args: { out: string; readPaths: string[]; writePaths: string[] }): ViewManifest;
@@ -20,7 +21,7 @@ export function createViewUseCases(deps: { files: FileDatabasePort; git: GitPort
     createView(cwd: string, args: { out: string; readPaths: string[]; writePaths: string[] }): ViewManifest {
       const root = deps.files.findProjectRoot(cwd);
       deps.authority.ensureInitialized(root);
-      const baseCommit = deps.git.requireHeadCommit(root);
+      const baseCommit = requireTrustedCommit(deps.git, root);
       const workspacePath = resolve(root, args.out);
       deps.files.assertSafeOutputDirectory(workspacePath);
 
@@ -33,10 +34,6 @@ export function createViewUseCases(deps: { files: FileDatabasePort; git: GitPort
       const selectedPaths = uniquePaths([...readPaths, ...writePaths]);
       for (const relPath of selectedPaths) {
         assertNotPrivateAuthorityMaterial(relPath);
-        const absPath = join(root, fromPosixPath(relPath));
-        if (!deps.files.pathExists(absPath)) {
-          throw new AwbsError(`Selected path does not exist: ${relPath}`);
-        }
       }
 
       const viewId = randomUUID();
@@ -47,32 +44,39 @@ export function createViewUseCases(deps: { files: FileDatabasePort; git: GitPort
       deps.files.ensureDir(workspacePath);
       deps.files.ensureDir(baselineRoot);
 
-      for (const relPath of selectedPaths) {
-        const sourceAbs = join(root, fromPosixPath(relPath));
-        const workspaceAbs = join(workspacePath, fromPosixPath(relPath));
-        const baselineAbs = join(baselineRoot, fromPosixPath(relPath));
-        deps.files.copyPath(sourceAbs, workspaceAbs);
-        deps.files.copyPath(sourceAbs, baselineAbs);
-        const kind: IndexKind = deps.files.isDirectory(sourceAbs) ? "directory" : "file";
-        sources.push({
-          path: relPath,
-          sourcePath: sourceAbs,
-          workspacePath: workspaceAbs,
-          baselinePath: baselineAbs,
-          kind,
-          sha256: kind === "file" ? deps.files.sha256File(sourceAbs) : null
-        });
-        contractSources.push({
-          path: relPath,
-          sourcePath: sourceAbs,
-          workspacePath: workspaceAbs,
-          baselinePath: baselineAbs,
-          kind,
-          sha256: kind === "file" ? deps.files.sha256File(sourceAbs) : null,
-          mode: writePaths.includes(relPath) ? "write" : "read",
-          ext: {}
-        });
-      }
+      withTrustedWorktree(deps, root, baseCommit, "awbs-view-", (trustedRoot) => {
+        for (const relPath of selectedPaths) {
+          const trustedSourceAbs = join(trustedRoot, fromPosixPath(relPath));
+          if (!deps.files.pathExists(trustedSourceAbs)) {
+            throw new AwbsError(`Selected path does not exist in trusted database: ${relPath}`);
+          }
+          const sourceAbs = join(root, fromPosixPath(relPath));
+          const workspaceAbs = join(workspacePath, fromPosixPath(relPath));
+          const baselineAbs = join(baselineRoot, fromPosixPath(relPath));
+          deps.files.copyPath(trustedSourceAbs, workspaceAbs);
+          deps.files.copyPath(trustedSourceAbs, baselineAbs);
+          const kind: IndexKind = deps.files.isDirectory(trustedSourceAbs) ? "directory" : "file";
+          const sha256 = kind === "file" ? deps.files.sha256File(trustedSourceAbs) : null;
+          sources.push({
+            path: relPath,
+            sourcePath: sourceAbs,
+            workspacePath: workspaceAbs,
+            baselinePath: baselineAbs,
+            kind,
+            sha256
+          });
+          contractSources.push({
+            path: relPath,
+            sourcePath: sourceAbs,
+            workspacePath: workspaceAbs,
+            baselinePath: baselineAbs,
+            kind,
+            sha256,
+            mode: writePaths.includes(relPath) ? "write" : "read",
+            ext: {}
+          });
+        }
+      });
 
       const createdAt = new Date().toISOString();
       const contract: AuthorityViewContract = {

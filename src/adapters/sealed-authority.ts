@@ -4,6 +4,8 @@ import { AwbsError } from "../domain/errors.ts";
 import type {
   AuthorityCatalog,
   AuthorityEvent,
+  AuthorityLedger,
+  AuthorityLedgerEntry,
   AuthorityLocal,
   AuthorityPayloadType,
   AuthorityReceipt,
@@ -34,6 +36,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     const repoPath = this.repoPath(root);
     const localPath = this.localPath(root);
     const eventsPath = this.eventsPath(root);
+    const ledgerEventsPath = this.ledgerEventsPath(root);
 
     if (!this.files.pathExists(repoPath)) {
       const repo: AuthorityRepo = {
@@ -59,6 +62,9 @@ export class SealedAuthorityAdapter implements AuthorityPort {
 
     if (!this.files.pathExists(eventsPath)) {
       this.files.writeText(eventsPath, "");
+    }
+    if (!this.files.pathExists(ledgerEventsPath)) {
+      this.files.writeText(ledgerEventsPath, "");
     }
 
     const catalogSealPath = this.catalogSealPath(root);
@@ -207,6 +213,19 @@ export class SealedAuthorityAdapter implements AuthorityPort {
       }
     }
 
+    if (this.hasLedger(root)) {
+      try {
+        const before = this.readOptionalText(this.ledgerMirrorPath(root));
+        this.readLedger(root);
+        const after = this.readOptionalText(this.ledgerMirrorPath(root));
+        if (before !== after) {
+          repairedMirrors.push("ledger.mirror.json");
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
     return {
       ok: errors.length === 0,
       repairedMirrors,
@@ -239,6 +258,15 @@ export class SealedAuthorityAdapter implements AuthorityPort {
       }
     }
 
+    if (this.hasLedger(root)) {
+      const ledgerBefore = this.readOptionalText(this.ledgerMirrorPath(root));
+      const ledger = this.openSeal<AuthorityLedger>(root, this.ledgerSealPath(root), "authority.ledger");
+      this.writeMirror(this.ledgerMirrorPath(root), ledger);
+      if (ledgerBefore !== this.readOptionalText(this.ledgerMirrorPath(root))) {
+        repairedMirrors.push("ledger.mirror.json");
+      }
+    }
+
     if (repairedMirrors.length > 0) {
       this.appendEvent(root, {
         schemaVersion: 1,
@@ -259,6 +287,94 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     return catalog;
   }
 
+  hasLedger(root: string): boolean {
+    return this.files.pathExists(this.ledgerSealPath(root));
+  }
+
+  bootstrapLedger(root: string, parentTrustedCommit: string): AuthorityLedger {
+    this.ensureInitialized(root);
+    if (this.hasLedger(root)) {
+      throw new AwbsError("Trusted ledger is already bootstrapped.");
+    }
+    const now = new Date().toISOString();
+    const repo = this.readRepo(root);
+    const entry: AuthorityLedgerEntry = {
+      schemaVersion: 1,
+      entryId: randomUUID(),
+      kind: "bootstrap",
+      parentTrustedCommit,
+      baseCommit: parentTrustedCommit,
+      changesetId: null,
+      viewId: null,
+      createdAt: now,
+      appliedPaths: [],
+      changesetManifestHash: null,
+      authorityContractHash: null,
+      operationHash: contentHash({
+        kind: "bootstrap",
+        parentTrustedCommit,
+        repoId: repo.repoId,
+        createdAt: now
+      }),
+      ext: {}
+    };
+    const ledger: AuthorityLedger = {
+      schemaVersion: 1,
+      repoId: repo.repoId,
+      ledgerVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+      headEntryId: entry.entryId,
+      entries: [entry],
+      ext: {}
+    };
+    this.writeLedger(root, ledger);
+    this.appendLedgerEvent(root, {
+      schemaVersion: 1,
+      event: "LEDGER_BOOTSTRAPPED",
+      eventId: randomUUID(),
+      createdAt: now,
+      details: { parentTrustedCommit, entryId: entry.entryId }
+    });
+    return ledger;
+  }
+
+  readLedger(root: string): AuthorityLedger {
+    this.ensureInitializedNoCatalogRead(root);
+    const ledger = this.openSeal<AuthorityLedger>(root, this.ledgerSealPath(root), "authority.ledger");
+    this.writeMirror(this.ledgerMirrorPath(root), ledger);
+    return ledger;
+  }
+
+  appendLedgerEntry(root: string, entry: AuthorityLedgerEntry): AuthorityLedger {
+    const ledger = this.readLedger(root);
+    if (ledger.entries.some((existing) => existing.entryId === entry.entryId)) {
+      throw new AwbsError(`Ledger entry already exists: ${entry.entryId}`);
+    }
+    const now = new Date().toISOString();
+    const nextLedger: AuthorityLedger = {
+      ...ledger,
+      ledgerVersion: ledger.ledgerVersion + 1,
+      updatedAt: now,
+      headEntryId: entry.entryId,
+      entries: [...ledger.entries, entry]
+    };
+    this.writeLedger(root, nextLedger);
+    this.appendLedgerEvent(root, {
+      schemaVersion: 1,
+      event: "LEDGER_ENTRY_APPENDED",
+      eventId: randomUUID(),
+      createdAt: now,
+      viewId: entry.viewId ?? undefined,
+      details: {
+        entryId: entry.entryId,
+        changesetId: entry.changesetId,
+        parentTrustedCommit: entry.parentTrustedCommit
+      }
+    });
+    return nextLedger;
+  }
+
   private ensureInitializedNoCatalogRead(root: string): void {
     this.files.ensureDir(join(root, ".awbs", "authority", "views"));
     this.files.ensureDir(join(root, ".awbs", "private"));
@@ -277,6 +393,16 @@ export class SealedAuthorityAdapter implements AuthorityPort {
       catalogVersion: catalog.catalogVersion
     });
     this.writeMirror(this.catalogMirrorPath(root), catalog);
+  }
+
+  private writeLedger(root: string, ledger: AuthorityLedger): void {
+    this.writeSeal(root, this.ledgerSealPath(root), "authority.ledger", ledger, {
+      repoId: ledger.repoId,
+      schemaVersion: ledger.schemaVersion,
+      ledgerVersion: ledger.ledgerVersion,
+      headEntryId: ledger.headEntryId
+    });
+    this.writeMirror(this.ledgerMirrorPath(root), ledger);
   }
 
   private writeViewContract(root: string, contract: AuthorityViewContract): void {
@@ -305,7 +431,8 @@ export class SealedAuthorityAdapter implements AuthorityPort {
 
   private writeSeal(root: string, path: string, payloadType: "authority.catalog", payload: AuthorityCatalog, aad: Record<string, unknown>): void;
   private writeSeal(root: string, path: string, payloadType: "authority.viewContract", payload: AuthorityViewContract, aad: Record<string, unknown>): void;
-  private writeSeal(root: string, path: string, payloadType: AuthorityPayloadType, payload: AuthorityCatalog | AuthorityViewContract, aad: Record<string, unknown>): void {
+  private writeSeal(root: string, path: string, payloadType: "authority.ledger", payload: AuthorityLedger, aad: Record<string, unknown>): void;
+  private writeSeal(root: string, path: string, payloadType: AuthorityPayloadType, payload: AuthorityCatalog | AuthorityViewContract | AuthorityLedger, aad: Record<string, unknown>): void {
     const key = this.deriveKey(root);
     const nonce = randomBytes(12);
     const plaintext = Buffer.from(canonicalJson(payload), "utf8");
@@ -370,6 +497,12 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     this.files.writeText(path, `${existing}${JSON.stringify(event)}\n`);
   }
 
+  private appendLedgerEvent(root: string, event: AuthorityEvent): void {
+    const path = this.ledgerEventsPath(root);
+    const existing = this.files.pathExists(path) ? this.files.readText(path) : "";
+    this.files.writeText(path, `${existing}${JSON.stringify(event)}\n`);
+  }
+
   private writeMirror(path: string, value: unknown): void {
     this.files.writeJson(path, value);
   }
@@ -390,12 +523,24 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     return join(root, ".awbs", "authority", "view-events.jsonl");
   }
 
+  private ledgerEventsPath(root: string): string {
+    return join(root, ".awbs", "authority", "ledger-events.jsonl");
+  }
+
   private catalogSealPath(root: string): string {
     return join(root, ".awbs", "authority", "catalog.seal.json");
   }
 
   private catalogMirrorPath(root: string): string {
     return join(root, ".awbs", "authority", "catalog.mirror.json");
+  }
+
+  private ledgerSealPath(root: string): string {
+    return join(root, ".awbs", "authority", "ledger.seal.json");
+  }
+
+  private ledgerMirrorPath(root: string): string {
+    return join(root, ".awbs", "authority", "ledger.mirror.json");
   }
 
   private viewDir(root: string, viewId: string): string {

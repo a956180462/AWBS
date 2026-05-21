@@ -173,6 +173,68 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (domain === "ledger" && action === "bootstrap") {
+    const result = runtime.usecases.ledger.bootstrapLedger(cwd);
+    if (parsed.flags.has("json")) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Trusted chain bootstrapped: ${result.currentTrustedCommit}`);
+      console.log(`Parent: ${result.parentTrustedCommit}`);
+      console.log(`Entry: ${result.headEntryId}`);
+    }
+    return;
+  }
+
+  if (domain === "ledger" && (action === "inspect" || action === "verify")) {
+    const report = action === "inspect" ? runtime.usecases.ledger.inspectLedger(cwd) : runtime.usecases.ledger.verifyLedger(cwd);
+    if (parsed.flags.has("json")) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(runtime.usecases.ledger.formatLedgerReport(report));
+    }
+    if (!report.ok) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (domain === "db" && action === "audit") {
+    const report = runtime.usecases.db.auditDatabase(cwd);
+    if (parsed.flags.has("json")) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(runtime.usecases.db.formatAuditReport(report));
+    }
+    if (!report.ok) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (domain === "db" && action === "clean-rebuild") {
+    const report = runtime.usecases.db.cleanRebuild(cwd);
+    if (parsed.flags.has("json")) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(runtime.usecases.db.formatCleanRebuildReport(report));
+    }
+    return;
+  }
+
+  if (domain === "db" && action === "backups" && parsed.positionals[0] === "list") {
+    const backups = runtime.usecases.db.listBackups(cwd);
+    if (parsed.flags.has("json")) {
+      console.log(JSON.stringify(backups, null, 2));
+    } else if (backups.length === 0) {
+      console.log("No AWBS database backups found.");
+    } else {
+      for (const backup of backups) {
+        console.log(backup);
+      }
+    }
+    return;
+  }
+
   if (domain === "authority" && action === "verify") {
     const report = runtime.usecases.authority.verifyAuthority(cwd);
     if (parsed.flags.has("json")) {
@@ -258,6 +320,12 @@ Commands:
   awbs changeset collect --workspace <workspace>
   awbs changeset inspect <changesetDir|id> [--json]
   awbs changeset apply <changesetDir|id>
+  awbs ledger bootstrap [--json]
+  awbs ledger inspect [--json]
+  awbs ledger verify [--json]
+  awbs db audit [--json]
+  awbs db clean-rebuild [--json]
+  awbs db backups list [--json]
   awbs authority verify [--json]
   awbs authority repair-mirrors [--json]
 `);

@@ -1,11 +1,12 @@
 import { join, relative } from "node:path";
-import { INDEX_PATH, LEGACY_INDEX_PATH, SUMMARY_PATH } from "../domain/constants.ts";
+import { INDEX_PATH, LEGACY_INDEX_PATH, SUMMARY_PATH, TRUSTED_REF } from "../domain/constants.ts";
 import { fromPosixPath, normalizeUserPath, toPosixPath } from "../domain/paths.ts";
 import type { IndexEntry, IndexKind, IndexStatus, SummaryEntry } from "../domain/types.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { GitPort } from "../ports/git.ts";
 import type { IndexStorePort } from "../ports/index-store.ts";
 import type { SummaryStorePort } from "../ports/summary-store.ts";
+import { requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
 
 export type IndexUseCases = {
   rebuildIndex(cwd: string): { active: number; removed: number; path: string };
@@ -26,25 +27,27 @@ export function createIndexUseCases(deps: {
       const root = deps.files.findProjectRoot(cwd);
       const indexFile = join(root, INDEX_PATH);
       const oldEntries = deps.index.readIndex(indexFile, join(root, LEGACY_INDEX_PATH));
-      const commit = deps.git.headCommit(root);
+      const commit = requireTrustedCommit(deps.git, root);
       const activePaths = new Set<string>();
       const nextEntries: IndexEntry[] = [];
 
-      for (const fileEntry of deps.files.walkIndexableEntries(root)) {
-        const absPath = join(root, fromPosixPath(fileEntry.path));
-        const entry: IndexEntry = {
-          path: fileEntry.path,
-          kind: fileEntry.kind,
-          sha256: fileEntry.sha256,
-          size: fileEntry.size,
-          mtime: fileEntry.mtime,
-          commit,
-          status: "active",
-          ...resolveSummary(deps.summaries, join(root, SUMMARY_PATH), absPath, fileEntry.path, fileEntry.kind, fileEntry.sha256)
-        };
-        activePaths.add(fileEntry.path);
-        nextEntries.push(entry);
-      }
+      withTrustedWorktree(deps, root, commit, "awbs-index-", (trustedRoot) => {
+        for (const fileEntry of deps.files.walkIndexableEntries(trustedRoot)) {
+          const absPath = join(trustedRoot, fromPosixPath(fileEntry.path));
+          const entry: IndexEntry = {
+            path: fileEntry.path,
+            kind: fileEntry.kind,
+            sha256: fileEntry.sha256,
+            size: fileEntry.size,
+            mtime: fileEntry.mtime,
+            commit,
+            status: "active",
+            ...resolveSummary(deps.summaries, join(root, SUMMARY_PATH), absPath, fileEntry.path, fileEntry.kind, fileEntry.sha256)
+          };
+          activePaths.add(fileEntry.path);
+          nextEntries.push(entry);
+        }
+      });
 
       for (const oldEntry of oldEntries) {
         if (!activePaths.has(oldEntry.path)) {
@@ -84,7 +87,7 @@ export function createIndexUseCases(deps: {
         path: relPath,
         kind,
         sha256,
-        commit: deps.git.headCommit(root),
+        commit: deps.git.refCommit(root, TRUSTED_REF) ?? deps.git.headCommit(root),
         summary: args.summary
       });
     },

@@ -31,14 +31,15 @@ export function createInitUseCases(deps: { files: FileDatabasePort; git: GitPort
       }
 
       const awbsGitignore = join(cwd, AWBS_DIR, ".gitignore");
-      const ignored = ensureIgnoredLines(deps.files.pathExists(awbsGitignore) ? deps.files.readText(awbsGitignore) : "", ["index/", "views/", "changesets/", "private/"]);
+      const ignored = ensureIgnoredLines(deps.files.pathExists(awbsGitignore) ? deps.files.readText(awbsGitignore) : "", ["/index/", "/views/", "/changesets/", "/private/"]);
       deps.files.writeText(awbsGitignore, ignored);
     }
   };
 }
 
 function ensureIgnoredLines(existing: string, required: string[]): string {
-  const lines = existing.split(/\r?\n/).filter(Boolean);
+  const legacy = new Set(["index/", "views/", "changesets/", "private/"]);
+  const lines = existing.split(/\r?\n/).filter((line) => line && !legacy.has(line));
   for (const line of required) {
     if (!lines.includes(line)) {
       lines.push(line);
