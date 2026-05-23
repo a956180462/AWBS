@@ -59,12 +59,12 @@ init
 - `db clean-rebuild` 可以从 trusted commit 重建干净数据库目录，并把旧目录整体保留为 backup。
 - 已经有 Node 内置测试覆盖架构、authority、changeset、SQLite 索引和 CLI 闭环。
 - 当前仓库已经是 public GitHub repository，并带 MIT License。
+- 当前 npm 包名是 `@c956180462/awbs`，全局命令仍然是 `awbs`。
 
 摘要边界是硬边界：AWBS 永远不会内置 AI 摘要模型、API 配置、提示词或业务理解逻辑。AWBS 只保存和索引上层写入的摘要。
 
 ## 还没有做什么
 
-- 还没有发布到 npm registry；目前可以从本地 checkout 全局安装。
 - 还没有实现操作系统级只读属性、文件级 ACL 或强安全沙箱。
 - 还没有实现跨机器 authority key 迁移。
 - 还没有实现 workflow/run/step 的完整记录层。
@@ -84,6 +84,8 @@ init
 npm install -g @c956180462/awbs
 awbs --help
 ```
+
+如果曾经安装过 `0.0.1`，请升级到 `0.0.2` 或更新版本。`0.0.1` 的包入口仍指向 `.ts` 源码，在全局安装后可能触发 Node.js 的 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`。`0.0.2` 开始发布包会先编译到 `dist/`，全局命令加载的是 JavaScript。
 
 从本地仓库全局安装：
 
@@ -190,12 +192,12 @@ It already supports:
 - Database audit for divergence from the AWBS trusted chain.
 - Clean database rebuild from the trusted commit with backup preservation.
 - Node test coverage for the main closed loop.
+- Public npm package under `@c956180462/awbs`, with the global command name `awbs`.
 
 Summary generation is deliberately outside AWBS. AWBS never ships a built-in AI summarizer, model configuration, API key flow, prompt layer, or business-specific content understanding. Upper-layer applications may generate summaries however they want and write them through AWBS summary commands.
 
 It does not yet provide:
 
-- npm registry publishing.
 - OS-level readonly enforcement.
 - File-level ACL.
 - Strong sandbox isolation.
@@ -217,6 +219,8 @@ Install from npm:
 npm install -g @c956180462/awbs
 awbs --help
 ```
+
+If you installed `0.0.1`, upgrade to `0.0.2` or later. Version `0.0.1` pointed the package bin at TypeScript source, which can fail under `node_modules` with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. Starting from `0.0.2`, the npm package runs compiled JavaScript from `dist/`.
 
 Install from a local checkout:
 
@@ -256,6 +260,8 @@ English: This is a public personal research project with irregular maintenance. 
 ## Development
 
 ```powershell
+npm run build
+node bin\awbs.js --help
 npm test
 npm pack --dry-run
 ```
