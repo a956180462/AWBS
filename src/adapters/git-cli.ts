@@ -66,7 +66,8 @@ export class GitCliAdapter implements GitPort {
 
   fileSha256AtCommit(root: string, commit: string, path: string): string {
     const result = spawnSync("git", ["-C", root, "show", `${commit}:${path}`], {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
     });
     if (result.status !== 0) {
       throw new AwbsError(`git show ${commit}:${path} failed:\n${result.stderr?.toString() ?? result.stdout?.toString() ?? ""}`);
@@ -80,7 +81,8 @@ export class GitCliAdapter implements GitPort {
 
   fileSha256InIndex(root: string, path: string): string {
     const result = spawnSync("git", ["-C", root, "show", `:${path}`], {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
     });
     if (result.status !== 0) {
       throw new AwbsError(`git show :${path} failed:\n${result.stderr?.toString() ?? result.stdout?.toString() ?? ""}`);
@@ -120,7 +122,8 @@ export class GitCliAdapter implements GitPort {
   diffNoIndex(baselineRoot: string, workspacePath: string): string {
     const result = spawnSync("git", ["diff", "--no-index", "--binary", "--no-color", "--", baselineRoot, workspacePath], {
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
     });
     if (result.status === 0 || result.status === 1) {
       return result.stdout ?? "";
@@ -140,7 +143,8 @@ export class GitCliAdapter implements GitPort {
     const result = spawnSync("git", args, {
       cwd,
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
     });
     return {
       stdout: result.stdout ?? "",

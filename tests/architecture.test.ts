@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultRuntime } from "../src/runtime.ts";
@@ -45,3 +46,29 @@ test("authority session daemon uses hidden detached spawning without stdio pipes
   assert.match(source, /windowsHide:\s*true/);
   assert.doesNotMatch(source, /stdio:\s*\[\s*"pipe"/);
 });
+
+test("child process calls opt into hidden Windows windows", () => {
+  for (const file of listSourceFiles("src").concat(listSourceFiles("tests"))) {
+    const lines = readFileSync(file, "utf8").split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (/execFileSync\(|spawnSync\(|spawn\(/.test(lines[index])) {
+        const callBlock = lines.slice(index, index + 10).join("\n");
+        assert.match(callBlock, /windowsHide:\s*true/, `${file}:${index + 1} starts a child process without windowsHide: true`);
+      }
+    }
+  }
+});
+
+function listSourceFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const name of readdirSync(root)) {
+    const path = join(root, name);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...listSourceFiles(path));
+    } else if (path.endsWith(".ts")) {
+      files.push(path);
+    }
+  }
+  return files;
+}

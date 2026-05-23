@@ -200,7 +200,8 @@ function sessionRequest(cwd: string, request: Record<string, unknown>): SessionR
     execFileSync(process.execPath, [CLI, "__session-request"], {
       cwd,
       encoding: "utf8",
-      input: JSON.stringify({ root: cwd, request })
+      input: JSON.stringify({ root: cwd, request }),
+      windowsHide: true
     })
   ) as SessionResponse;
 }
@@ -223,12 +224,13 @@ function safeStopSession(cwd: string): void {
   spawnSync(process.execPath, [CLI, "authority", "session", "stop", "--control-token-stdin"], {
     cwd,
     encoding: "utf8",
-    input: CONTROLLER_TOKEN
+    input: CONTROLLER_TOKEN,
+    windowsHide: true
   });
 }
 
 function awbs(cwd: string, args: string[]): string {
-  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
+  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", windowsHide: true });
 }
 
 function awbsToken(cwd: string, args: string[]): string {
@@ -236,11 +238,11 @@ function awbsToken(cwd: string, args: string[]): string {
 }
 
 function awbsInput(cwd: string, args: string[], input: string): string {
-  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input });
+  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input, windowsHide: true });
 }
 
 function awbsFail(cwd: string, args: string[]): { stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", windowsHide: true });
   assert.notEqual(result.status, 0);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
@@ -252,7 +254,8 @@ function awbsFailToken(cwd: string, args: string[]): { stdout: string; stderr: s
 async function awbsFailTokenAsync(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   const child = spawn(process.execPath, [CLI, ...args], {
     cwd,
-    stdio: ["pipe", "pipe", "pipe"]
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
   });
   child.stdin.end(CONTROLLER_TOKEN);
   let stdout = "";
@@ -273,11 +276,11 @@ async function awbsFailTokenAsync(cwd: string, args: string[]): Promise<{ stdout
 }
 
 function awbsFailInput(cwd: string, args: string[], input: string): { stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input });
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input, windowsHide: true });
   assert.notEqual(result.status, 0);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" });
+  return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
 }

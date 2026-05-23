@@ -466,7 +466,7 @@ function tryGitCommonDir(root: string): string | null {
 
 function gitCommonDir(root: string): string {
   try {
-    return resolve(execFileSync("git", ["-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8" }).trim());
+    return resolve(execFileSync("git", ["-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8", windowsHide: true }).trim());
   } catch {
     throw new AwbsError(`Cannot verify Git common directory for authority session root: ${root}`);
   }

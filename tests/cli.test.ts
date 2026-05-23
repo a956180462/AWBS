@@ -202,21 +202,21 @@ test("external summaries are written through AWBS and used by index rebuild", ()
 });
 
 function awbs(cwd: string, args: string[]): string {
-  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
+  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", windowsHide: true });
 }
 
 function awbsToken(cwd: string, args: string[]): string {
-  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN });
+  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN, windowsHide: true });
 }
 
 function awbsFail(cwd: string, args: string[]): { stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", windowsHide: true });
   assert.notEqual(result.status, 0);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
 function awbsFailToken(cwd: string, args: string[]): { stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN });
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN, windowsHide: true });
   assert.notEqual(result.status, 0);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
@@ -225,7 +225,8 @@ function startSession(cwd: string): void {
   execFileSync(process.execPath, [CLI, "authority", "session", "start", "--control-stdin"], {
     cwd,
     encoding: "utf8",
-    input: JSON.stringify({ recoverySecret: RECOVERY_SECRET, controllerToken: CONTROLLER_TOKEN })
+    input: JSON.stringify({ recoverySecret: RECOVERY_SECRET, controllerToken: CONTROLLER_TOKEN }),
+    windowsHide: true
   });
 }
 
@@ -233,10 +234,11 @@ function safeStopSession(cwd: string): void {
   spawnSync(process.execPath, [CLI, "authority", "session", "stop", "--control-token-stdin"], {
     cwd,
     encoding: "utf8",
-    input: CONTROLLER_TOKEN
+    input: CONTROLLER_TOKEN,
+    windowsHide: true
   });
 }
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" });
+  return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true });
 }
