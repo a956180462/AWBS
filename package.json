@@ -1,6 +1,6 @@
 {
   "name": "@c956180462/awbs",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Agent Work Base Space CLI prototype for file-system database workspaces.",
   "license": "MIT",
   "type": "module",
