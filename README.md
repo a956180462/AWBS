@@ -10,6 +10,15 @@ AWBS is intentionally **not** a sandbox system. Its core concern is workflow wor
 
 AWBS 不是沙箱系统。它关心的是 agent 工作流的工作目录管理：这一步能看到什么、允许改什么、改完后如何收集变更、哪些变更可以写回 Git 管理的文件系统数据库。
 
+## 文档入口
+
+- [产品文档](./docs/PRODUCT.md)：AWBS 是什么、解决什么问题、不解决什么问题。
+- [使用文档](./docs/USAGE.md)：从安装、初始化、创建 view 到 apply changeset 的操作手册。
+- [全链路文档](./docs/FULL_CHAIN.md)：AWBS 从 init 到 trusted chain 推进的完整数据流。
+- [开发学习文档](./docs/DEVELOPMENT_LEARNING.md)：源码分层、关键机制和学习顺序。
+- [当前特性总览](./AWBS_CURRENT_FEATURES.md)：当前初版已经实现的能力清单。
+- [核心设计文档](./AWBS_CORE_DESIGN.md)：设计思想、架构、可信事实层和长期边界。
+
 ## 当前效果
 
 这个仓库现在已经是一个可运行的 v0/001/002/003/005/006/007 CLI 原型，已经打通了最小闭环：
@@ -137,6 +146,10 @@ awbs authority repair-mirrors --control-token-stdin [--json]
 
 ## 设计文档
 
+- [docs/PRODUCT.md](./docs/PRODUCT.md)：产品定位、适用场景和边界。
+- [docs/USAGE.md](./docs/USAGE.md)：CLI 使用手册。
+- [docs/FULL_CHAIN.md](./docs/FULL_CHAIN.md)：全链路运行机制。
+- [docs/DEVELOPMENT_LEARNING.md](./docs/DEVELOPMENT_LEARNING.md)：开发学习路径和源码结构。
 - [AWBS_CORE_DESIGN.md](./AWBS_CORE_DESIGN.md)：核心思想、当前能力、技术架构、索引设计和 npm 包状态。
 - [AWBS_CURRENT_FEATURES.md](./AWBS_CURRENT_FEATURES.md)：当前系统已实现特性的集中总览。
 - [TASK_001_VIEW_AUTHORITY.md](./TASK_001_VIEW_AUTHORITY.md)：视图鉴权器、密封契约、明文镜像和鉴权目录总账。
