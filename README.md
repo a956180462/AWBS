@@ -78,6 +78,13 @@ init
 - Node.js `>=24.0.0`
 - Git
 
+从 npm 安装：
+
+```powershell
+npm install -g @c956180462/awbs
+awbs --help
+```
+
 从本地仓库全局安装：
 
 ```powershell
@@ -203,6 +210,13 @@ Requirements:
 
 - Node.js `>=24.0.0`
 - Git
+
+Install from npm:
+
+```powershell
+npm install -g @c956180462/awbs
+awbs --help
+```
 
 Install from a local checkout:
 

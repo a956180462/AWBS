@@ -22,7 +22,7 @@ git --version
 从 npm 安装：
 
 ```powershell
-npm install -g awbs
+npm install -g @c956180462/awbs
 awbs --help
 ```
 
