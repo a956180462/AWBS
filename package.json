@@ -26,15 +26,9 @@
     "bin",
     "dist",
     "src",
-    "docs",
-    "AWBS_CORE_DESIGN.md",
-    "AWBS_CURRENT_FEATURES.md",
-    "TASK_001_VIEW_AUTHORITY.md",
-    "TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md",
-    "TASK_004_TRUSTED_AUTHORITY_LAYER.md",
-    "TASK_005_AUTHORITY_SESSION.md",
-    "TASK_006_TRUST_BOUNDARY_HARDENING.md",
-    "TASK_007_TRUSTED_OPERATION_ENTRY.md"
+    "docs/*.md",
+    "docs/reference",
+    "docs/tasks"
   ],
   "scripts": {
     "awbs": "node src/cli.ts",

@@ -776,7 +776,7 @@ awbs authority session stop --control-token-stdin
 
 数据库清理也不再采用“在污染目录里逐个删除”的方式。`awbs db clean-rebuild` 会从 currentTrustedCommit 重建一个干净目录，把原数据库目录整体改名为 `<name>.backup-<timestamp>`，再让干净目录接管原路径。旧目录默认保留，不自动删除。
 
-完整任务说明见 `TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md`。
+完整任务说明见 [`TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md`](../tasks/TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md)。
 
 ## 19. 004 可信事实层与 Authority Service
 
@@ -846,7 +846,7 @@ Level 4: remote signer / external append-only checkpoint
 
 摘要边界保持不变：AWBS 永远不内置 AI 摘要。可信事实层可以记录 summary update 是否进入可信链，但摘要内容仍然由上层业务生成。
 
-完整任务说明见 `TASK_004_TRUSTED_AUTHORITY_LAYER.md`。
+完整任务说明见 [`TASK_004_TRUSTED_AUTHORITY_LAYER.md`](../tasks/TASK_004_TRUSTED_AUTHORITY_LAYER.md)。
 
 ## 20. 005 A 模式 Authority Session
 

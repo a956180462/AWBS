@@ -801,6 +801,5 @@ refused
 3. [使用文档](./USAGE.md)。
 4. [全链路文档](./FULL_CHAIN.md)。
 5. [开发学习文档](./DEVELOPMENT_LEARNING.md)。
-6. [AWBS 当前系统特性总览](../AWBS_CURRENT_FEATURES.md)。
-7. [AWBS 003：可信数据链与可信重建](../TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md)。
-
+6. [AWBS 当前系统特性总览](./reference/AWBS_CURRENT_FEATURES.md)。
+7. [AWBS 003：可信数据链与可信重建](./tasks/TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md)。

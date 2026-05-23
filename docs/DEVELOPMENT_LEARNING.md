@@ -10,20 +10,21 @@ AWBS 当前是一个 Node/TypeScript CLI 原型。开发时可以依赖 Node.js 
 
 ```text
 README.md
+  -> docs/README.md
   -> docs/PRODUCT.md
   -> docs/FULL_CHAIN.md
-  -> AWBS_CORE_DESIGN.md
-  -> TASK_001_VIEW_AUTHORITY.md
-  -> TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md
-  -> TASK_004_TRUSTED_AUTHORITY_LAYER.md
-  -> TASK_005_AUTHORITY_SESSION.md
-  -> TASK_006_TRUST_BOUNDARY_HARDENING.md
-  -> TASK_007_TRUSTED_OPERATION_ENTRY.md
+  -> docs/reference/AWBS_CORE_DESIGN.md
+  -> docs/tasks/TASK_001_VIEW_AUTHORITY.md
+  -> docs/tasks/TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md
+  -> docs/tasks/TASK_004_TRUSTED_AUTHORITY_LAYER.md
+  -> docs/tasks/TASK_005_AUTHORITY_SESSION.md
+  -> docs/tasks/TASK_006_TRUST_BOUNDARY_HARDENING.md
+  -> docs/tasks/TASK_007_TRUSTED_OPERATION_ENTRY.md
   -> src/
   -> tests/
 ```
 
-`AWBS_USER_DISCUSSION_NOTES.md` 是原始讨论记录，适合了解思想来源，但不进入 npm 包。
+本机如果存在 `docs/archive/AWBS_USER_DISCUSSION_NOTES.md`，它是原始讨论记录，只作个人归档，不进入 Git 和 npm 包。
 
 ## 2. 架构分层
 
