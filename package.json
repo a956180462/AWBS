@@ -1,6 +1,6 @@
 {
   "name": "@c956180462/awbs",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Agent Work Base Space CLI prototype for file-system database workspaces.",
   "license": "MIT",
   "type": "module",
@@ -24,6 +24,7 @@
   ],
   "files": [
     "bin",
+    "dist",
     "src",
     "docs",
     "AWBS_CORE_DESIGN.md",
@@ -37,9 +38,16 @@
   ],
   "scripts": {
     "awbs": "node src/cli.ts",
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "test": "node --test --test-concurrency=1 tests/*.test.ts"
   },
   "engines": {
     "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^6.0.3"
   }
 }

@@ -2,7 +2,7 @@
 
 本文档面向想阅读 AWBS 源码、理解设计演进、fork 后继续改造的人。
 
-AWBS 当前是一个 Node/TypeScript CLI 原型。它没有 build step，依赖 Node.js 24 直接运行 `.ts` 文件。
+AWBS 当前是一个 Node/TypeScript CLI 原型。开发时可以依赖 Node.js 24 直接运行 `.ts` 文件；npm 发布包必须先编译到 `dist/`，因为 Node 不支持在 `node_modules` 下直接 strip TypeScript。
 
 ## 1. 学习顺序
 
@@ -293,6 +293,8 @@ AWBS 的核心开发原则：
 
 ```powershell
 npm test
+npm run build
+node bin\awbs.js --help
 node src\cli.ts --help
 npm pack --dry-run
 git diff --check
@@ -305,7 +307,7 @@ npm adduser
 npm publish --access public
 ```
 
-`awbs` 包名当前可用性需要发布前再次用 npm registry 确认。
+当前公开包名是 `@c956180462/awbs`，全局命令仍然是 `awbs`。
 
 ## 15. 后续可做方向
 

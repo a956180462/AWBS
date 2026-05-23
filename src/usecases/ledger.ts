@@ -88,16 +88,14 @@ export function inspectTrustedLedger(
     errors.push("AWBS trusted chain is not bootstrapped.");
   } else {
     try {
-      withTrustedWorktree(deps, root, currentTrustedCommit, "awbs-ledger-", (trustedRoot) => {
-        ledger = deps.authority.readLedger(trustedRoot);
-      });
-      const headEntry = ledger?.entries.find((entry) => entry.entryId === ledger?.headEntryId);
+      ledger = withTrustedWorktree(deps, root, currentTrustedCommit, "awbs-ledger-", (trustedRoot) =>
+        deps.authority.readLedger(trustedRoot)
+      );
+      const headEntry = ledger.entries.find((entry) => entry.entryId === ledger?.headEntryId);
       if (!headEntry) {
         errors.push("Trusted ledger head entry is missing.");
       }
-      if (ledger) {
-        errors.push(...verifyLedgerHashChain(ledger));
-      }
+      errors.push(...verifyLedgerHashChain(ledger));
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
