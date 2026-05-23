@@ -10,13 +10,16 @@ export function normalizeUserPath(input: string): string {
   if (!trimmed) {
     return "";
   }
-  assertSafeRelativePath(trimmed);
-  return toPosixPath(trimmed.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+$/, ""));
+  const normalized = trimmed.replace(/\\/g, "/");
+  const displayPath = normalized === "." ? "." : normalized.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  assertSafeRelativePath(displayPath);
+  return toPosixPath(displayPath);
 }
 
 export function assertSafeRelativePath(input: string): void {
   const normalized = input.replace(/\\/g, "/");
-  if (isAbsolute(input) || normalized.startsWith("/") || normalized.includes("../") || normalized === ".." || normalized.startsWith("../")) {
+  const segments = normalized.split("/");
+  if (isAbsolute(input) || normalized.startsWith("/") || segments.some((segment) => segment === "." || segment === "..")) {
     throw new AwbsError(`Unsafe path: ${input}`);
   }
 }

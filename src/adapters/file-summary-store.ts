@@ -49,7 +49,7 @@ export class FileSummaryStoreAdapter implements SummaryStorePort {
       return exact;
     }
     const pathLevel = summaries.find((entry) => entry.sha256 === null);
-    return pathLevel ?? summaries.at(-1) ?? null;
+    return pathLevel ?? null;
   }
 
   fallbackSummary(absPath: string, relPath: string, kind: IndexKind): string {

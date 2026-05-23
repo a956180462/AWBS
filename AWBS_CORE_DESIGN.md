@@ -470,7 +470,8 @@ awbs index query
 awbs summary set / get / list
 awbs view create / inspect / revoke
 awbs changeset collect / inspect / apply
-awbs authority verify / repair-mirrors
+awbs authority verify
+awbs authority repair-mirrors --control-token-stdin
 ```
 
 后续仍然可以继续扩展 workflow / run / step 记录结构，但这不影响当前 AWBS 作为文件系统数据库底座的最小闭环。
@@ -629,7 +630,7 @@ sealed = AES-256-GCM(K, canonical_json(contract_or_catalog), aad)
 awbs view inspect <viewId> [--json]
 awbs view revoke <viewId>
 awbs authority verify [--json]
-awbs authority repair-mirrors [--json]
+awbs authority repair-mirrors --control-token-stdin [--json]
 ```
 
 `changeset apply` 在提交业务文件变更时，会先验证 authority 状态。如果 authority 有合法的未提交变更，例如新建 view 产生的密封契约和目录总账更新，apply 会把 `.awbs/authority` 一起纳入 Git commit。这样 AWBS 不会出现“业务数据进了 Git，但视图契约没有进入 Git”的隐藏旁路。
@@ -746,11 +747,13 @@ awbs db backups list [--json]
 awbs init
 git add .
 git commit -m "initialize database"
-awbs ledger bootstrap
+awbs authority session start --control-stdin
+awbs ledger bootstrap --control-token-stdin
 
-awbs view create --out workspace --read A --write B
+awbs view create --out workspace --read A --write B --control-token-stdin
 awbs changeset collect --workspace workspace
-awbs changeset apply <changesetId>
+awbs changeset apply <changesetId> --control-token-stdin
+awbs authority session stop --control-token-stdin
 ```
 
 003 改变了几个核心流程的事实源：
@@ -835,7 +838,114 @@ Level 4: remote signer / external append-only checkpoint
 
 完整任务说明见 `TASK_004_TRUSTED_AUTHORITY_LAYER.md`。
 
-## 20. npm 包形态
+## 20. 005 A 模式 Authority Session
+
+005 已经实现 `Ephemeral Key Session / 运行期本地钥匙托管`，也就是当前的 A 模式。
+
+005 不创建 Windows / Linux 用户，不接操作系统 keychain，不做系统服务。它先解决一个更直接的问题：
+
+```text
+agent 生命周期内，不让 key 文件留在 repo 文件系统里被顺手读取。
+```
+
+当前 session 生命周期是：
+
+```text
+awbs authority session start --control-stdin
+  -> 上层应用通过 stdin 注入 recoverySecret + controllerToken
+  -> AWBS 读取 .awbs/private/local.json
+  -> 写入 recovery.seal.json
+  -> 启动同用户后台 session daemon
+  -> 删除 local.json
+
+session active
+  -> key 只在 daemon 内存中
+  -> session.json 只记录 pid、socketPath、repoId、startedAt、status
+  -> 可信写入必须带 controllerToken
+  -> controllerToken 不进入 IPC，只生成带 nonce 的 HMAC controller proof
+  -> session daemon 拒绝重放 nonce
+  -> 可信写入成功响应必须带 response proof
+
+awbs authority session stop --control-token-stdin
+  -> daemon 写回 local.json
+  -> 删除 recovery.seal.json
+  -> 删除 session.json
+```
+
+`recoverySecret` 和 `controllerToken` 不由 AWBS 自动生成或保存。它们应当由上层应用的非 AI 控制层提供。人类可以是上层来源之一，但 AWBS 不把“人类第一次输入口令”作为内置默认流程。
+
+005 还明确区分两个 actor：
+
+```text
+host controller
+  持有 recoverySecret / controllerToken。
+  可以启动、停止、恢复 session。
+  可以授权可信写入。
+
+workflow agent
+  在工作空间里工作。
+  可以生成 changeset。
+  不应持有 key、recoverySecret 或 controllerToken。
+```
+
+需要 controller token 的可信写入包括：
+
+```text
+ledger bootstrap
+view create
+view revoke
+changeset apply
+```
+
+如果 session 异常退出，`local.json` 不存在而 `recovery.seal.json` 仍在，AWBS 会进入 authority unavailable 状态。此时必须由宿主应用或人工显式执行：
+
+```text
+awbs authority session recover --recovery-secret-stdin
+```
+
+错误 recoverySecret 不能恢复，也不能写出伪成功的 `local.json`。
+
+B 模式仍然是后续方向：独立 OS 身份、系统级 key 存储、真正的本地 Authority Service 或 remote signer，都不属于 005 已实现范围。
+
+## 21. 007 可信操作入口加固
+
+007 后，AWBS 进一步收束可信操作入口：
+
+```text
+Workflow Actor
+  可以产出 workspace 修改和 changeset。
+
+Host Controller
+  持有 controller capability。
+  决定是否 create view / revoke view / repair mirrors / apply changeset。
+
+AWBS Authority Session
+  只接受语义操作。
+  不接受 sign(rawHash)、appendLedgerEntry(rawEntry)、createViewContract(rawContract)。
+```
+
+当前实现中，controller capability 不是把 raw `controllerToken` 直接发送给 session endpoint，而是：
+
+```text
+request(method, root, args)
+  -> 计算 requestHash
+  -> 加入 nonce + createdAt
+  -> 用 controllerToken 派生 HMAC proof
+  -> daemon 校验 proof 并记录 nonce
+  -> daemon 对成功响应签回 response proof
+  -> CLI 验证 response proof 后才承认成功
+```
+
+这解决两个问题：
+
+- proof 不能被简单重放。
+- `.awbs/private/session.json` 如果被篡改指向假 endpoint，假 endpoint 不能伪造可信写入成功。
+
+session daemon 还会把请求 root 限定在启动仓库，或同一 Git common dir 下的 AWBS 临时 worktree。复制 repoId / session.json 到另一个仓库不能复用 session。
+
+`authority verify` 只读；`authority repair-mirrors` 是显式写入，必须走 controller capability。`.awbs` 和 `.git` 是 AWBS 系统路径，按大小写无关方式拒绝投影、summary 和 changeset 写回。
+
+## 22. npm 包形态
 
 AWBS 当前已经具备 npm CLI 包形态。
 

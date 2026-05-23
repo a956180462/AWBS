@@ -1,6 +1,7 @@
 import type { IndexKind } from "./types.ts";
 
 export type AuthorityViewStatus = "active" | "revoked";
+export type AuthorityTrustMode = "repo-local-sealed-key-v1" | "ephemeral-local-key-v1";
 export type AuthorityEventType =
   | "AUTHORITY_INITIALIZED"
   | "VIEW_CREATED"
@@ -9,7 +10,7 @@ export type AuthorityEventType =
   | "MIRROR_REBUILT"
   | "LEDGER_BOOTSTRAPPED"
   | "LEDGER_ENTRY_APPENDED";
-export type AuthorityPayloadType = "authority.catalog" | "authority.viewContract" | "authority.ledger";
+export type AuthorityPayloadType = "authority.catalog" | "authority.viewContract" | "authority.ledger" | "authority.changesetReceipt";
 
 export type AuthorityRepo = {
   schemaVersion: 1;
@@ -17,6 +18,7 @@ export type AuthorityRepo = {
   authoritySalt: string;
   algorithm: "AWBS-AES-256-GCM-v1";
   kdf: "scrypt-repo-local-runtime-v1";
+  trustMode?: AuthorityTrustMode;
   createdAt: string;
 };
 
@@ -101,6 +103,18 @@ export type AuthorityReceipt = {
   ext: Record<string, unknown>;
 };
 
+export type AuthorityChangesetReceipt = {
+  schemaVersion: 1;
+  changesetId: string;
+  viewId: string;
+  baseCommit: string;
+  createdAt: string;
+  payloadHash: string;
+  operationHash: string;
+  manifestHash: string;
+  ext: Record<string, unknown>;
+};
+
 export type AuthorityEvent = {
   schemaVersion: 1;
   event: AuthorityEventType;
@@ -112,7 +126,7 @@ export type AuthorityEvent = {
 
 export type AuthorityVerifyReport = {
   ok: boolean;
-  repairedMirrors: string[];
+  mirrorMismatches: string[];
   errors: string[];
   catalog: {
     views: number;
@@ -126,10 +140,26 @@ export type AuthorityRepairReport = {
 
 export type AuthorityLedgerEntryKind = "bootstrap" | "changeset";
 
+export type AuthorityChangesetApplyOperation = {
+  schemaVersion: 1;
+  parentTrustedCommit: string;
+  baseCommit: string;
+  changesetId: string;
+  viewId: string;
+  appliedPaths: string[];
+  changesetManifestHash: string;
+  changesetPayloadHash: string;
+  authorityContractHash: string;
+  createdAt?: string;
+  ext: Record<string, unknown>;
+};
+
 export type AuthorityLedgerEntry = {
   schemaVersion: 1;
   entryId: string;
   kind: AuthorityLedgerEntryKind;
+  previousEntryHash: string | null;
+  entryHash: string;
   parentTrustedCommit: string;
   baseCommit: string;
   changesetId: string | null;
@@ -137,6 +167,7 @@ export type AuthorityLedgerEntry = {
   createdAt: string;
   appliedPaths: string[];
   changesetManifestHash: string | null;
+  changesetPayloadHash: string | null;
   authorityContractHash: string | null;
   operationHash: string;
   ext: Record<string, unknown>;

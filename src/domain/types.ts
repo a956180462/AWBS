@@ -2,7 +2,7 @@ export type IndexStatus = "active" | "removed";
 export type IndexKind = "file" | "directory";
 export type ChangeKind = "add" | "modify" | "delete";
 export type ChangesetStatus = "valid" | "invalid";
-export type SummarySource = "external" | "fallback";
+export type SummarySource = "external" | "fallback" | "path-level";
 
 export type IndexEntry = {
   path: string;
@@ -69,6 +69,8 @@ export type ChangesetManifest = {
   writePaths: string[];
   changes: ChangeRecord[];
   violations: ChangeRecord[];
+  payloadHash: string;
+  operationHash: string;
   summary: {
     added: number;
     modified: number;

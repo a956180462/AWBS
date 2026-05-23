@@ -45,7 +45,7 @@ export class GitCliAdapter implements GitPort {
   }
 
   statusPorcelain(root: string): string {
-    return this.run(["status", "--porcelain"], root);
+    return this.run(["status", "--porcelain", "-uall"], root);
   }
 
   addAll(root: string, paths: string[]): void {

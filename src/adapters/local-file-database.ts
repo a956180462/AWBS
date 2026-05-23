@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { INDEX_EXCLUDED_PATHS, VIEW_MANIFEST } from "../domain/constants.ts";
 import { AwbsError } from "../domain/errors.ts";
@@ -30,6 +30,7 @@ export class LocalFileDatabaseAdapter implements FileDatabasePort {
   }
 
   ensureDir(path: string): void {
+    assertSafeDirectoryTarget(path);
     mkdirSync(path, { recursive: true });
   }
 
@@ -40,35 +41,44 @@ export class LocalFileDatabaseAdapter implements FileDatabasePort {
   }
 
   copyPath(source: string, destination: string): void {
+    assertNoSymlinkTree(source);
+    assertSafeFileTarget(destination);
     this.ensureDir(dirname(destination));
     cpSync(source, destination, { recursive: true, force: true, errorOnExist: false });
   }
 
   removePath(path: string): void {
+    assertSafeFileTarget(path);
     if (existsSync(path)) {
+      assertNotSymlink(path);
       rmSync(path, { recursive: true, force: true });
     }
   }
 
   readText(path: string): string {
+    assertSafeFileTarget(path);
     return readFileSync(path, "utf8");
   }
 
   writeText(path: string, value: string): void {
+    assertSafeFileTarget(path);
     this.ensureDir(dirname(path));
     writeFileSync(path, value, "utf8");
   }
 
   readJson<T>(path: string): T {
+    assertSafeFileTarget(path);
     return JSON.parse(readFileSync(path, "utf8")) as T;
   }
 
   writeJson(path: string, value: unknown): void {
+    assertSafeFileTarget(path);
     this.ensureDir(dirname(path));
     writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   }
 
   sha256File(path: string): string {
+    assertSafeFileTarget(path);
     return createHash("sha256").update(readFileSync(path)).digest("hex");
   }
 
@@ -77,6 +87,10 @@ export class LocalFileDatabaseAdapter implements FileDatabasePort {
     const visit = (absPath: string, relPath: string): void => {
       if (shouldExclude(relPath)) {
         return;
+      }
+      const lstat = lstatSync(absPath);
+      if (lstat.isSymbolicLink()) {
+        throw new AwbsError(`Symbolic links are not supported by AWBS file database paths: ${absPath}`);
       }
       const stats = statSync(absPath);
       if (relPath) {
@@ -111,6 +125,10 @@ export class LocalFileDatabaseAdapter implements FileDatabasePort {
       if (options.ignoreAwbsViewManifest && relPath === VIEW_MANIFEST) {
         return;
       }
+      const lstat = lstatSync(absPath);
+      if (lstat.isSymbolicLink()) {
+        throw new AwbsError(`Symbolic links are not supported by AWBS snapshots: ${absPath}`);
+      }
       const stats = statSync(absPath);
       if (stats.isDirectory()) {
         const children = readdirSync(absPath).sort((a, b) => a.localeCompare(b));
@@ -129,6 +147,47 @@ export class LocalFileDatabaseAdapter implements FileDatabasePort {
 
     visit(root, "");
     return entries;
+  }
+}
+
+function assertNoSymlinkTree(path: string): void {
+  assertNotSymlink(path);
+  if (!statSync(path).isDirectory()) {
+    return;
+  }
+  const children = readdirSync(path);
+  for (const child of children) {
+    assertNoSymlinkTree(join(path, child));
+  }
+}
+
+function assertNotSymlink(path: string): void {
+  if (lstatSync(path).isSymbolicLink()) {
+    throw new AwbsError(`Symbolic links are not supported by AWBS file database paths: ${path}`);
+  }
+}
+
+function assertNoSymlinkInExistingAncestors(path: string): void {
+  let current = dirname(path);
+  while (current && current !== dirname(current)) {
+    if (existsSync(current)) {
+      assertNotSymlink(current);
+    }
+    current = dirname(current);
+  }
+}
+
+function assertSafeFileTarget(path: string): void {
+  assertNoSymlinkInExistingAncestors(path);
+  if (existsSync(path)) {
+    assertNotSymlink(path);
+  }
+}
+
+function assertSafeDirectoryTarget(path: string): void {
+  assertNoSymlinkInExistingAncestors(path);
+  if (existsSync(path)) {
+    assertNotSymlink(path);
   }
 }
 

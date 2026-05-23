@@ -6,6 +6,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const CLI = resolve("src/cli.ts");
+const RECOVERY_SECRET = "test recovery secret";
+const CONTROLLER_TOKEN = "test controller token";
 
 test("awbs v0 closed loop and read-only violation handling", () => {
   const project = mkdtempSync(join(tmpdir(), "awbs-v0-"));
@@ -22,7 +24,8 @@ test("awbs v0 closed loop and read-only violation handling", () => {
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
-    awbs(project, ["ledger", "bootstrap"]);
+    startSession(project);
+    awbsToken(project, ["ledger", "bootstrap", "--control-token-stdin"]);
     const initialHead = git(project, ["rev-parse", "HEAD"]).trim();
 
     awbs(project, ["index", "rebuild"]);
@@ -30,7 +33,7 @@ test("awbs v0 closed loop and read-only violation handling", () => {
     const indexQuery = JSON.parse(awbs(project, ["index", "query", "draft", "--json"]));
     assert.ok(indexQuery.some((entry: { path: string; commit: string | null; status: string }) => entry.path === "B/draft.md" && entry.commit && entry.status === "active"));
 
-    awbs(project, ["view", "create", "--out", "workspace-good", "--read", "A", "--write", "B"]);
+    awbsToken(project, ["view", "create", "--out", "workspace-good", "--read", "A", "--write", "B", "--control-token-stdin"]);
     assert.ok(existsSync(join(project, "workspace-good", "A", "context.md")));
     assert.ok(existsSync(join(project, "workspace-good", "B", "draft.md")));
     assert.ok(!existsSync(join(project, "workspace-good", "C")));
@@ -45,11 +48,11 @@ test("awbs v0 closed loop and read-only violation handling", () => {
 
     const inspect = awbs(project, ["changeset", "inspect", goodId]);
     assert.match(inspect, /Status: valid/);
-    awbs(project, ["changeset", "apply", goodId, "--adapter", "same-path"]);
+    awbsToken(project, ["changeset", "apply", goodId, "--adapter", "same-path", "--control-token-stdin"]);
     assert.equal(readFileSync(join(project, "B", "draft.md"), "utf8"), "second draft\n");
     assert.notEqual(git(project, ["rev-parse", "HEAD"]).trim(), initialHead);
 
-    awbs(project, ["view", "create", "--out", "workspace-bad", "--read", "A", "--write", "B"]);
+    awbsToken(project, ["view", "create", "--out", "workspace-bad", "--read", "A", "--write", "B", "--control-token-stdin"]);
     writeFileSync(join(project, "workspace-bad", "A", "context.md"), "mutated context\n", "utf8");
     const badCollectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace-bad"]);
     const badId = /Changeset collected: (\S+)/.exec(badCollectOut)?.[1];
@@ -57,9 +60,10 @@ test("awbs v0 closed loop and read-only violation handling", () => {
     const badManifest = JSON.parse(readFileSync(join(project, ".awbs", "changesets", badId, "manifest.json"), "utf8"));
     assert.equal(badManifest.status, "invalid");
     assert.equal(badManifest.summary.violations, 1);
-    const badApply = awbsFail(project, ["changeset", "apply", badId, "--adapter", "same-path"]);
+    const badApply = awbsFailToken(project, ["changeset", "apply", badId, "--adapter", "same-path", "--control-token-stdin"]);
     assert.match(badApply.stderr, /invalid and cannot be applied/);
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -74,24 +78,26 @@ test("apply rejects stale view once trusted chain advances", () => {
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
-    awbs(project, ["ledger", "bootstrap"]);
+    startSession(project);
+    awbsToken(project, ["ledger", "bootstrap", "--control-token-stdin"]);
 
-    awbs(project, ["view", "create", "--out", "workspace-old", "--write", "B"]);
+    awbsToken(project, ["view", "create", "--out", "workspace-old", "--write", "B", "--control-token-stdin"]);
     writeFileSync(join(project, "workspace-old", "B", "draft.md"), "old view edit\n", "utf8");
     const oldCollectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace-old"]);
     const oldId = /Changeset collected: (\S+)/.exec(oldCollectOut)?.[1];
     assert.ok(oldId);
 
-    awbs(project, ["view", "create", "--out", "workspace-new", "--write", "B"]);
+    awbsToken(project, ["view", "create", "--out", "workspace-new", "--write", "B", "--control-token-stdin"]);
     writeFileSync(join(project, "workspace-new", "B", "draft.md"), "new trusted edit\n", "utf8");
     const newCollectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace-new"]);
     const newId = /Changeset collected: (\S+)/.exec(newCollectOut)?.[1];
     assert.ok(newId);
-    awbs(project, ["changeset", "apply", newId, "--adapter", "same-path"]);
+    awbsToken(project, ["changeset", "apply", newId, "--adapter", "same-path", "--control-token-stdin"]);
 
-    const result = awbsFail(project, ["changeset", "apply", oldId, "--adapter", "same-path"]);
+    const result = awbsFailToken(project, ["changeset", "apply", oldId, "--adapter", "same-path", "--control-token-stdin"]);
     assert.match(result.stderr, /Stale view/);
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -105,15 +111,16 @@ test("index rebuild keeps removed entries", () => {
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
-    awbs(project, ["ledger", "bootstrap"]);
+    startSession(project);
+    awbsToken(project, ["ledger", "bootstrap", "--control-token-stdin"]);
 
     awbs(project, ["index", "rebuild"]);
-    awbs(project, ["view", "create", "--out", "workspace-remove", "--write", "note.md"]);
+    awbsToken(project, ["view", "create", "--out", "workspace-remove", "--write", "note.md", "--control-token-stdin"]);
     rmSync(join(project, "workspace-remove", "note.md"));
     const collectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace-remove"]);
     const changesetId = /Changeset collected: (\S+)/.exec(collectOut)?.[1];
     assert.ok(changesetId);
-    awbs(project, ["changeset", "apply", changesetId]);
+    awbsToken(project, ["changeset", "apply", changesetId, "--control-token-stdin"]);
     awbs(project, ["index", "rebuild"]);
 
     const removed = awbs(project, ["index", "query", "note.md", "--status", "removed", "--json"]);
@@ -123,39 +130,7 @@ test("index rebuild keeps removed entries", () => {
     assert.equal(entries[0].status, "removed");
     assert.match(entries[0].summary, /hello index|note.md/);
   } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
-test("index rebuild migrates legacy JSONL removed entries into disk sqlite", () => {
-  const project = mkdtempSync(join(tmpdir(), "awbs-legacy-index-"));
-  try {
-    awbs(project, ["init"]);
-    writeFileSync(join(project, ".awbs", "index", "files.jsonl"), `${JSON.stringify({
-      path: "old.md",
-      kind: "file",
-      sha256: "legacy",
-      size: 3,
-      mtime: new Date(0).toISOString(),
-      commit: "legacy-commit",
-      status: "active",
-      summary: "legacy old summary",
-      summarySource: "external"
-    })}\n`, "utf8");
-    writeFileSync(join(project, "current.md"), "current\n", "utf8");
-    git(project, ["config", "user.email", "awbs@example.test"]);
-    git(project, ["config", "user.name", "AWBS Test"]);
-    git(project, ["add", "."]);
-    git(project, ["commit", "-m", "initial"]);
-    awbs(project, ["ledger", "bootstrap"]);
-
-    awbs(project, ["index", "rebuild"]);
-    assert.ok(existsSync(join(project, ".awbs", "index", "files.sqlite")));
-    const removed = JSON.parse(awbs(project, ["index", "query", "old.md", "--status", "removed", "--json"]));
-    assert.equal(removed.length, 1);
-    assert.equal(removed[0].path, "old.md");
-    assert.equal(removed[0].summary, "legacy old summary");
-  } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -170,7 +145,8 @@ test("index query uses persistent sqlite, FTS summary search, path search, and s
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
-    awbs(project, ["ledger", "bootstrap"]);
+    startSession(project);
+    awbsToken(project, ["ledger", "bootstrap", "--control-token-stdin"]);
 
     awbs(project, ["summary", "set", "scene-001.md", "--text", "unique semantic beacon"]);
     awbs(project, ["index", "rebuild"]);
@@ -186,6 +162,7 @@ test("index query uses persistent sqlite, FTS summary search, path search, and s
     const special = awbs(project, ["index", "query", "[x]", "--json"]);
     assert.doesNotThrow(() => JSON.parse(special));
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -199,7 +176,8 @@ test("external summaries are written through AWBS and used by index rebuild", ()
     git(project, ["config", "user.name", "AWBS Test"]);
     git(project, ["add", "."]);
     git(project, ["commit", "-m", "initial"]);
-    awbs(project, ["ledger", "bootstrap"]);
+    startSession(project);
+    awbsToken(project, ["ledger", "bootstrap", "--control-token-stdin"]);
 
     awbs(project, ["summary", "set", "note.md", "--text", "Business-owned note summary"]);
     const getSummary = awbs(project, ["summary", "get", "note.md"]);
@@ -218,6 +196,7 @@ test("external summaries are written through AWBS and used by index rebuild", ()
     assert.equal(entries[0].summary, "Business-owned note summary");
     assert.equal(entries[0].summarySource, "external");
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -226,10 +205,36 @@ function awbs(cwd: string, args: string[]): string {
   return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
 }
 
+function awbsToken(cwd: string, args: string[]): string {
+  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN });
+}
+
 function awbsFail(cwd: string, args: string[]): { stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
   assert.notEqual(result.status, 0);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function awbsFailToken(cwd: string, args: string[]): { stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN });
+  assert.notEqual(result.status, 0);
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function startSession(cwd: string): void {
+  execFileSync(process.execPath, [CLI, "authority", "session", "start", "--control-stdin"], {
+    cwd,
+    encoding: "utf8",
+    input: JSON.stringify({ recoverySecret: RECOVERY_SECRET, controllerToken: CONTROLLER_TOKEN })
+  });
+}
+
+function safeStopSession(cwd: string): void {
+  spawnSync(process.execPath, [CLI, "authority", "session", "stop", "--control-token-stdin"], {
+    cwd,
+    encoding: "utf8",
+    input: CONTROLLER_TOKEN
+  });
 }
 
 function git(cwd: string, args: string[]): string {

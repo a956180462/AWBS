@@ -1,5 +1,6 @@
 import { join, relative } from "node:path";
-import { INDEX_PATH, LEGACY_INDEX_PATH, SUMMARY_PATH, TRUSTED_REF } from "../domain/constants.ts";
+import { INDEX_PATH, SUMMARY_PATH } from "../domain/constants.ts";
+import { assertUserDataPath } from "../domain/path-policy.ts";
 import { fromPosixPath, normalizeUserPath, toPosixPath } from "../domain/paths.ts";
 import type { IndexEntry, IndexKind, IndexStatus, SummaryEntry } from "../domain/types.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
@@ -26,7 +27,7 @@ export function createIndexUseCases(deps: {
     rebuildIndex(cwd: string): { active: number; removed: number; path: string } {
       const root = deps.files.findProjectRoot(cwd);
       const indexFile = join(root, INDEX_PATH);
-      const oldEntries = deps.index.readIndex(indexFile, join(root, LEGACY_INDEX_PATH));
+      const oldEntries = deps.index.readIndex(indexFile);
       const commit = requireTrustedCommit(deps.git, root);
       const activePaths = new Set<string>();
       const nextEntries: IndexEntry[] = [];
@@ -79,15 +80,21 @@ export function createIndexUseCases(deps: {
     setSummary(cwd: string, args: { path: string; summary: string }): SummaryEntry {
       const root = deps.files.findProjectRoot(cwd);
       const relPath = normalizeUserPath(args.path);
-      const absPath = join(root, fromPosixPath(relPath));
-      const exists = deps.files.pathExists(absPath);
-      const kind: IndexKind | "unknown" = exists ? (deps.files.isDirectory(absPath) ? "directory" : "file") : "unknown";
-      const sha256 = exists && kind === "file" ? deps.files.sha256File(absPath) : null;
+      assertUserDataPath(relPath, "write a summary for");
+      const commit = requireTrustedCommit(deps.git, root);
+      let kind: IndexKind | "unknown" = "unknown";
+      let sha256: string | null = null;
+      withTrustedWorktree(deps, root, commit, "awbs-summary-", (trustedRoot) => {
+        const absPath = join(trustedRoot, fromPosixPath(relPath));
+        const exists = deps.files.pathExists(absPath);
+        kind = exists ? (deps.files.isDirectory(absPath) ? "directory" : "file") : "unknown";
+        sha256 = exists && kind === "file" ? deps.files.sha256File(absPath) : null;
+      });
       return deps.summaries.writeSummary(join(root, SUMMARY_PATH), {
         path: relPath,
         kind,
         sha256,
-        commit: deps.git.refCommit(root, TRUSTED_REF) ?? deps.git.headCommit(root),
+        commit,
         summary: args.summary
       });
     },
@@ -95,8 +102,13 @@ export function createIndexUseCases(deps: {
     getSummary(cwd: string, path: string): SummaryEntry | null {
       const root = deps.files.findProjectRoot(cwd);
       const relPath = normalizeUserPath(path);
-      const absPath = join(root, fromPosixPath(relPath));
-      const sha256 = deps.files.pathExists(absPath) && !deps.files.isDirectory(absPath) ? deps.files.sha256File(absPath) : null;
+      assertUserDataPath(relPath, "read a summary for");
+      const commit = requireTrustedCommit(deps.git, root);
+      let sha256: string | null = null;
+      withTrustedWorktree(deps, root, commit, "awbs-summary-", (trustedRoot) => {
+        const absPath = join(trustedRoot, fromPosixPath(relPath));
+        sha256 = deps.files.pathExists(absPath) && !deps.files.isDirectory(absPath) ? deps.files.sha256File(absPath) : null;
+      });
       return deps.summaries.findSummary(join(root, SUMMARY_PATH), relPath, sha256);
     },
 
@@ -114,10 +126,11 @@ function resolveSummary(
   relPath: string,
   kind: IndexKind,
   sha256: string | null
-): { summary: string; summarySource: "external" | "fallback" } {
+): { summary: string; summarySource: "external" | "path-level" | "fallback" } {
   const external = summaries.findSummary(summaryFile, relPath, sha256);
   if (external) {
-    return { summary: external.summary, summarySource: "external" };
+    const summarySource = sha256 !== null && external.sha256 === null ? "path-level" : "external";
+    return { summary: external.summary, summarySource };
   }
   return { summary: summaries.fallbackSummary(absPath, relPath, kind), summarySource: "fallback" };
 }

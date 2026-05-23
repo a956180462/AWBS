@@ -19,6 +19,10 @@ test("runtime creates default use case groups", () => {
   assert.equal(typeof runtime.usecases.changeset.applyChangeset, "function");
   assert.equal(typeof runtime.usecases.authority.verifyAuthority, "function");
   assert.equal(typeof runtime.usecases.authority.repairMirrors, "function");
+  assert.equal(typeof runtime.usecases.session.startSession, "function");
+  assert.equal(typeof runtime.usecases.session.statusSession, "function");
+  assert.equal(typeof runtime.usecases.session.stopSession, "function");
+  assert.equal(typeof runtime.usecases.session.recoverSession, "function");
   assert.equal(typeof runtime.usecases.ledger.bootstrapLedger, "function");
   assert.equal(typeof runtime.usecases.ledger.inspectLedger, "function");
   assert.equal(typeof runtime.usecases.ledger.verifyLedger, "function");
@@ -32,4 +36,12 @@ test("cli depends on runtime, not concrete infrastructure adapters", () => {
   assert.match(cliSource, /from "\.\/runtime\.ts"/);
   assert.doesNotMatch(cliSource, /from "\.\/adapters\//);
   assert.doesNotMatch(cliSource, /from "\.\/usecases\//);
+});
+
+test("authority session daemon uses hidden detached spawning without stdio pipes", () => {
+  const source = readFileSync("src/adapters/local-authority-session.ts", "utf8");
+  assert.match(source, /detached:\s*true/);
+  assert.match(source, /stdio:\s*"ignore"/);
+  assert.match(source, /windowsHide:\s*true/);
+  assert.doesNotMatch(source, /stdio:\s*\[\s*"pipe"/);
 });

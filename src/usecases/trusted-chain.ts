@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { TRUSTED_REF } from "../domain/constants.ts";
@@ -25,7 +25,7 @@ export function withTrustedWorktree<T>(
   const worktreeRoot = join(parent, "worktree");
   try {
     deps.git.createDetachedWorktree(root, worktreeRoot, commit);
-    copyPrivateMaterial(root, worktreeRoot);
+    copyPrivateMaterial(deps.files, root, worktreeRoot);
     return fn(worktreeRoot);
   } finally {
     try {
@@ -37,22 +37,13 @@ export function withTrustedWorktree<T>(
   }
 }
 
-export function copyCurrentAuthorityMaterial(root: string, worktreeRoot: string): void {
-  const source = join(root, ".awbs", "authority");
-  const destination = join(worktreeRoot, ".awbs", "authority");
-  if (!existsSync(source)) {
-    return;
-  }
-  cpSync(source, destination, { recursive: true, force: true });
-}
-
-function copyPrivateMaterial(root: string, worktreeRoot: string): void {
+function copyPrivateMaterial(files: FileDatabasePort, root: string, worktreeRoot: string): void {
   const source = join(root, ".awbs", "private");
   const destination = join(worktreeRoot, ".awbs", "private");
   if (!existsSync(source)) {
     return;
   }
-  cpSync(source, destination, { recursive: true, force: true });
+  files.copyPath(source, destination);
 }
 
 export function assertInsideParent(parent: string, child: string): void {

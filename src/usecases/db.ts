@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { TRUSTED_REF } from "../domain/constants.ts";
 import { AwbsError } from "../domain/errors.ts";
@@ -92,10 +92,10 @@ export function createDbUseCases(deps: { files: FileDatabasePort; git: GitPort; 
       }
 
       deps.git.cloneAtCommit(root, cleanPath, trustedCommit);
-      copyPrivateMaterial(root, cleanPath);
+      copyPrivateMaterial(deps.files, root, cleanPath);
       deps.git.updateRef(cleanPath, TRUSTED_REF, trustedCommit);
       const authorityReport = deps.authority.verify(cleanPath);
-      if (!authorityReport.ok) {
+      if (authorityReport.errors.length > 0) {
         rmSync(cleanPath, { recursive: true, force: true });
         throw new AwbsError(`Clean clone authority verification failed:\n${authorityReport.errors.join("\n")}`);
       }
@@ -178,11 +178,11 @@ export function createDbUseCases(deps: { files: FileDatabasePort; git: GitPort; 
   };
 }
 
-function copyPrivateMaterial(root: string, cleanPath: string): void {
+function copyPrivateMaterial(files: FileDatabasePort, root: string, cleanPath: string): void {
   const source = join(root, ".awbs", "private");
   const destination = join(cleanPath, ".awbs", "private");
   if (existsSync(source)) {
-    cpSync(source, destination, { recursive: true, force: true });
+    files.copyPath(source, destination);
   }
 }
 

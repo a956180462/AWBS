@@ -6,6 +6,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const CLI = resolve("src/cli.ts");
+const RECOVERY_SECRET = "test recovery secret";
+const CONTROLLER_TOKEN = "test controller token";
 
 test("view and index are projected from trusted commit, not polluted working tree", () => {
   const project = mkdtempSync(join(tmpdir(), "awbs-trusted-projection-"));
@@ -13,7 +15,7 @@ test("view and index are projected from trusted commit, not polluted working tre
     seedProject(project);
     writeFileSync(join(project, "B", "polluted.md"), "untrusted pollution\n", "utf8");
 
-    awbs(project, ["view", "create", "--out", "workspace", "--write", "B"]);
+    awbsToken(project, ["view", "create", "--out", "workspace", "--write", "B", "--control-token-stdin"]);
     assert.ok(existsSync(join(project, "workspace", "B", "draft.md")));
     assert.ok(!existsSync(join(project, "workspace", "B", "polluted.md")));
 
@@ -21,6 +23,7 @@ test("view and index are projected from trusted commit, not polluted working tre
     const polluted = JSON.parse(awbs(project, ["index", "query", "polluted", "--json"]));
     assert.equal(polluted.length, 0);
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -31,7 +34,7 @@ test("external commits do not enter the AWBS trusted chain", () => {
     seedProject(project);
     const trustedBefore = JSON.parse(awbs(project, ["ledger", "inspect", "--json"])).currentTrustedCommit;
 
-    awbs(project, ["view", "create", "--out", "workspace", "--write", "B"]);
+    awbsToken(project, ["view", "create", "--out", "workspace", "--write", "B", "--control-token-stdin"]);
     writeFileSync(join(project, "workspace", "B", "draft.md"), "trusted update\n", "utf8");
     const collectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace"]);
     const changesetId = /Changeset collected: (\S+)/.exec(collectOut)?.[1];
@@ -42,7 +45,7 @@ test("external commits do not enter the AWBS trusted chain", () => {
     git(project, ["commit", "-m", "external bypass"]);
     const externalCommit = git(project, ["rev-parse", "HEAD"]).trim();
 
-    awbs(project, ["changeset", "apply", changesetId]);
+    awbsToken(project, ["changeset", "apply", changesetId, "--control-token-stdin"]);
     const trustedAfter = JSON.parse(awbs(project, ["ledger", "inspect", "--json"])).currentTrustedCommit;
     assert.notEqual(trustedAfter, trustedBefore);
     assert.notEqual(trustedAfter, externalCommit);
@@ -55,6 +58,7 @@ test("external commits do not enter the AWBS trusted chain", () => {
     assert.equal(audit.headMatchesTrusted, false);
     assert.ok(audit.errors.some((error: string) => error.includes("not on top")));
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -64,16 +68,17 @@ test("clean-rebuild swaps in a clean database from trusted commit and keeps back
   let backupPath: string | null = null;
   try {
     seedProject(project);
-    awbs(project, ["view", "create", "--out", "workspace", "--write", "B"]);
+    awbsToken(project, ["view", "create", "--out", "workspace", "--write", "B", "--control-token-stdin"]);
     writeFileSync(join(project, "workspace", "B", "draft.md"), "clean trusted update\n", "utf8");
     const collectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace"]);
     const changesetId = /Changeset collected: (\S+)/.exec(collectOut)?.[1];
     assert.ok(changesetId);
-    awbs(project, ["changeset", "apply", changesetId]);
+    awbsToken(project, ["changeset", "apply", changesetId, "--control-token-stdin"]);
 
     writeFileSync(join(project, "B", "external.md"), "external pollution\n", "utf8");
     git(project, ["add", "B/external.md"]);
     git(project, ["commit", "-m", "external bypass"]);
+    safeStopSession(project);
 
     const report = JSON.parse(awbs(project, ["db", "clean-rebuild", "--json"]));
     backupPath = report.backupPath;
@@ -88,6 +93,7 @@ test("clean-rebuild swaps in a clean database from trusted commit and keeps back
     const backups = JSON.parse(awbs(project, ["db", "backups", "list", "--json"]));
     assert.ok(backups.includes(report.backupPath));
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
     if (backupPath) {
       rmSync(backupPath, { recursive: true, force: true });
@@ -105,17 +111,38 @@ function seedProject(project: string): void {
   git(project, ["config", "user.name", "AWBS Test"]);
   git(project, ["add", "."]);
   git(project, ["commit", "-m", "initial"]);
-  awbs(project, ["ledger", "bootstrap"]);
+  startSession(project);
+  awbsToken(project, ["ledger", "bootstrap", "--control-token-stdin"]);
 }
 
 function awbs(cwd: string, args: string[]): string {
   return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
 }
 
+function awbsToken(cwd: string, args: string[]): string {
+  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN });
+}
+
 function awbsFailAllowed(cwd: string, args: string[]): { stdout: string; stderr: string; status: number | null } {
   const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
   assert.notEqual(result.status, 0);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status };
+}
+
+function startSession(cwd: string): void {
+  execFileSync(process.execPath, [CLI, "authority", "session", "start", "--control-stdin"], {
+    cwd,
+    encoding: "utf8",
+    input: JSON.stringify({ recoverySecret: RECOVERY_SECRET, controllerToken: CONTROLLER_TOKEN })
+  });
+}
+
+function safeStopSession(cwd: string): void {
+  spawnSync(process.execPath, [CLI, "authority", "session", "stop", "--control-token-stdin"], {
+    cwd,
+    encoding: "utf8",
+    input: CONTROLLER_TOKEN
+  });
 }
 
 function git(cwd: string, args: string[]): string {

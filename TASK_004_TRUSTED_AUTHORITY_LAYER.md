@@ -203,6 +203,8 @@ Authority 验证 operation 时，必须重新计算这些 hash，而不是相信
 
 004 的主方向是引入 **AWBS Authority Service**。
 
+005 的实现选择先落 A 模式：同用户的 **Ephemeral Key Session / 运行期本地钥匙托管**。它不创建 OS 用户，不接系统 keychain，不实现独立系统服务。B 模式，也就是独立 OS 身份、系统级 key 存储和真正的 `awbsd` 服务，仍然是后续方向。
+
 它是一个独立运行的本地可信服务：
 
 ```text
@@ -394,18 +396,18 @@ AWBS 负责让自己的可信写入链路不暴露 key。
 在产品形态上，可以把它理解为：
 
 ```text
-awbs authority session start
+awbs authority session start --control-stdin
   -> load key into memory
   -> remove persisted key copy
   -> mark authority ready
 
-awbs authority session stop
+awbs authority session stop --control-token-stdin
   -> stop trusted writes
   -> persist key
   -> mark authority unavailable
 ```
 
-004 不要求马上实现这些命令，但后续 Authority Service 设计应当保留这个生命周期。
+005 已经实现了 A 模式的 session 生命周期。恢复因子由上层应用的非 AI 控制层通过 stdin 注入，不由 agent 工作流持有，也不默认要求人类在第一次运行时交互输入。
 
 ## Trust Anchor Levels
 

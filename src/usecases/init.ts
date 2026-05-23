@@ -38,8 +38,7 @@ export function createInitUseCases(deps: { files: FileDatabasePort; git: GitPort
 }
 
 function ensureIgnoredLines(existing: string, required: string[]): string {
-  const legacy = new Set(["index/", "views/", "changesets/", "private/"]);
-  const lines = existing.split(/\r?\n/).filter((line) => line && !legacy.has(line));
+  const lines = existing.split(/\r?\n/).filter(Boolean);
   for (const line of required) {
     if (!lines.includes(line)) {
       lines.push(line);

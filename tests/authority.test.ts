@@ -6,13 +6,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const CLI = resolve("src/cli.ts");
+const RECOVERY_SECRET = "test recovery secret";
+const CONTROLLER_TOKEN = "test controller token";
 
 test("authority artifacts are created, mirrors rebuild, and workspace manifest cannot expand permissions", () => {
   const project = mkdtempSync(join(tmpdir(), "awbs-authority-"));
   try {
     seedProject(project);
 
-    const createOut = awbs(project, ["view", "create", "--out", "workspace", "--read", "A", "--write", "B"]);
+    const createOut = awbsToken(project, ["view", "create", "--out", "workspace", "--read", "A", "--write", "B", "--control-token-stdin"]);
     const viewId = /View created: (\S+)/.exec(createOut)?.[1];
     assert.ok(viewId);
     assert.ok(existsSync(join(project, ".awbs", "authority", "repo.json")));
@@ -38,13 +40,12 @@ test("authority artifacts are created, mirrors rebuild, and workspace manifest c
     assert.equal(manifest.status, "invalid");
     assert.equal(manifest.summary.violations, 1);
 
-    const repairedMirror = JSON.parse(readFileSync(mirrorPath, "utf8"));
-    assert.equal(repairedMirror.viewId, viewId);
-    assert.deepEqual(repairedMirror.writePaths, ["B"]);
+    assert.equal(readFileSync(mirrorPath, "utf8"), "{\"hacked\":true}\n");
 
-    const apply = awbsFail(project, ["changeset", "apply", changesetId, "--adapter", "same-path"]);
+    const apply = awbsFailToken(project, ["changeset", "apply", changesetId, "--adapter", "same-path", "--control-token-stdin"]);
     assert.match(apply.stderr, /invalid and cannot be applied/);
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -53,7 +54,7 @@ test("tampered sealed view contract prevents collect", () => {
   const project = mkdtempSync(join(tmpdir(), "awbs-seal-tamper-"));
   try {
     seedProject(project);
-    const createOut = awbs(project, ["view", "create", "--out", "workspace", "--write", "B"]);
+    const createOut = awbsToken(project, ["view", "create", "--out", "workspace", "--write", "B", "--control-token-stdin"]);
     const viewId = /View created: (\S+)/.exec(createOut)?.[1];
     assert.ok(viewId);
 
@@ -66,6 +67,7 @@ test("tampered sealed view contract prevents collect", () => {
     const collect = awbsFail(project, ["changeset", "collect", "--workspace", "workspace"]);
     assert.match(collect.stderr, /Failed to open sealed authority payload/);
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -74,7 +76,7 @@ test("revoked view blocks future collect and apply without rolling back applied 
   const project = mkdtempSync(join(tmpdir(), "awbs-revoke-"));
   try {
     seedProject(project);
-    const createOut = awbs(project, ["view", "create", "--out", "workspace", "--write", "B"]);
+    const createOut = awbsToken(project, ["view", "create", "--out", "workspace", "--write", "B", "--control-token-stdin"]);
     const viewId = /View created: (\S+)/.exec(createOut)?.[1];
     assert.ok(viewId);
 
@@ -82,10 +84,10 @@ test("revoked view blocks future collect and apply without rolling back applied 
     const collectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace"]);
     const changesetId = /Changeset collected: (\S+)/.exec(collectOut)?.[1];
     assert.ok(changesetId);
-    awbs(project, ["changeset", "apply", changesetId, "--adapter", "same-path"]);
+    awbsToken(project, ["changeset", "apply", changesetId, "--adapter", "same-path", "--control-token-stdin"]);
     assert.equal(readFileSync(join(project, "B", "draft.md"), "utf8"), "applied before revoke\n");
 
-    awbs(project, ["view", "revoke", viewId]);
+    awbsToken(project, ["view", "revoke", viewId, "--control-token-stdin"]);
     assert.equal(readFileSync(join(project, "B", "draft.md"), "utf8"), "applied before revoke\n");
     const inspect = awbs(project, ["view", "inspect", viewId, "--json"]);
     assert.equal(JSON.parse(inspect).catalogView.status, "revoked");
@@ -93,9 +95,10 @@ test("revoked view blocks future collect and apply without rolling back applied 
     const collectAfterRevoke = awbsFail(project, ["changeset", "collect", "--workspace", "workspace"]);
     assert.match(collectAfterRevoke.stderr, /View has been revoked/);
 
-    const applyAfterRevoke = awbsFail(project, ["changeset", "apply", changesetId, "--adapter", "same-path"]);
+    const applyAfterRevoke = awbsFailToken(project, ["changeset", "apply", changesetId, "--adapter", "same-path", "--control-token-stdin"]);
     assert.match(applyAfterRevoke.stderr, /View has been revoked/);
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -104,22 +107,29 @@ test("authority verify and repair-mirrors inspect sealed authority state", () =>
   const project = mkdtempSync(join(tmpdir(), "awbs-verify-"));
   try {
     seedProject(project);
-    const createOut = awbs(project, ["view", "create", "--out", "workspace", "--write", "B"]);
+    const createOut = awbsToken(project, ["view", "create", "--out", "workspace", "--write", "B", "--control-token-stdin"]);
     const viewId = /View created: (\S+)/.exec(createOut)?.[1];
     assert.ok(viewId);
 
     const mirrorPath = join(project, ".awbs", "authority", "views", viewId, "mirror.json");
     writeFileSync(mirrorPath, "{\"stale\":true}\n", "utf8");
-    const verify = awbs(project, ["authority", "verify", "--json"]);
-    const report = JSON.parse(verify);
-    assert.equal(report.ok, true);
-    assert.ok(report.repairedMirrors.some((path: string) => path.includes(viewId)));
+    const verify = awbsFail(project, ["authority", "verify", "--json"]);
+    const report = JSON.parse(verify.stdout);
+    assert.equal(report.ok, false);
+    assert.ok(report.mirrorMismatches.some((path: string) => path.includes(viewId)));
+    assert.equal(readFileSync(mirrorPath, "utf8"), "{\"stale\":true}\n");
 
     writeFileSync(mirrorPath, "{\"stale\":true}\n", "utf8");
-    const repair = awbs(project, ["authority", "repair-mirrors", "--json"]);
+    const repairWithoutToken = awbsFail(project, ["authority", "repair-mirrors", "--json"]);
+    assert.match(repairWithoutToken.stderr, /requires --control-token-stdin/);
+
+    const repair = awbsToken(project, ["authority", "repair-mirrors", "--control-token-stdin", "--json"]);
     const repairReport = JSON.parse(repair);
     assert.ok(repairReport.repairedMirrors.some((path: string) => path.includes(viewId)));
+    const repairedMirror = JSON.parse(readFileSync(mirrorPath, "utf8"));
+    assert.equal(repairedMirror.viewId, viewId);
   } finally {
+    safeStopSession(project);
     rmSync(project, { recursive: true, force: true });
   }
 });
@@ -134,17 +144,44 @@ function seedProject(project: string): void {
   git(project, ["config", "user.name", "AWBS Test"]);
   git(project, ["add", "."]);
   git(project, ["commit", "-m", "initial"]);
-  awbs(project, ["ledger", "bootstrap"]);
+  startSession(project);
+  awbsToken(project, ["ledger", "bootstrap", "--control-token-stdin"]);
 }
 
 function awbs(cwd: string, args: string[]): string {
   return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
 }
 
+function awbsToken(cwd: string, args: string[]): string {
+  return execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN });
+}
+
 function awbsFail(cwd: string, args: string[]): { stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" });
   assert.notEqual(result.status, 0);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function awbsFailToken(cwd: string, args: string[]): { stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", input: CONTROLLER_TOKEN });
+  assert.notEqual(result.status, 0);
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function startSession(cwd: string): void {
+  execFileSync(process.execPath, [CLI, "authority", "session", "start", "--control-stdin"], {
+    cwd,
+    encoding: "utf8",
+    input: JSON.stringify({ recoverySecret: RECOVERY_SECRET, controllerToken: CONTROLLER_TOKEN })
+  });
+}
+
+function safeStopSession(cwd: string): void {
+  spawnSync(process.execPath, [CLI, "authority", "session", "stop", "--control-token-stdin"], {
+    cwd,
+    encoding: "utf8",
+    input: CONTROLLER_TOKEN
+  });
 }
 
 function git(cwd: string, args: string[]): string {

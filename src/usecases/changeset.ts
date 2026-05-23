@@ -1,14 +1,15 @@
-import { randomUUID } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import { VIEW_MANIFEST, TRUSTED_REF } from "../domain/constants.ts";
 import { AwbsError } from "../domain/errors.ts";
 import { contentHash } from "../domain/hash.ts";
+import { assertUserDataPath, isPathAllowedByWritePaths } from "../domain/path-policy.ts";
 import { assertSafeRelativePath, filterIgnoredStatus, fromPosixPath, isPathUnderAny, makeId, toPosixPath } from "../domain/paths.ts";
 import type { ChangeKind, ChangeRecord, ChangesetManifest, ViewManifest } from "../domain/types.ts";
+import type { AuthorityCatalog, AuthorityChangesetReceipt } from "../domain/authority-types.ts";
 import type { AuthorityPort } from "../ports/authority.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { GitPort } from "../ports/git.ts";
-import { copyCurrentAuthorityMaterial, requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
+import { requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
 
 export type ChangesetUseCases = {
   collectChangeset(cwd: string, workspaceInput: string): ChangesetManifest;
@@ -54,27 +55,31 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
           continue;
         }
 
-        const allowed = isPathUnderAny(relPath, contract.writePaths);
+        const policyError = dataPathPolicyError(relPath);
+        const allowed = !policyError && isPathUnderAny(relPath, contract.writePaths);
         const record: ChangeRecord = {
           path: relPath,
           kind,
           allowed,
-          reason: allowed ? undefined : "Path is not within writePaths."
+          reason: allowed ? undefined : policyError ?? "Path is not within writePaths."
         };
 
         if (after && (kind === "add" || kind === "modify")) {
-          const source = join(workspacePath, fromPosixPath(relPath));
-          const destination = join(filesRoot, fromPosixPath(relPath));
-          deps.files.copyPath(source, destination);
-          record.file = toPosixPath(relative(changesetRoot, destination));
           record.sha256 = after.sha256;
+          if (allowed) {
+            const source = join(workspacePath, fromPosixPath(relPath));
+            const destination = join(filesRoot, fromPosixPath(relPath));
+            deps.files.copyPath(source, destination);
+            record.file = toPosixPath(relative(changesetRoot, destination));
+          }
         }
 
         changes.push(record);
       }
 
       const violations = changes.filter((change) => !change.allowed);
-      const manifest: ChangesetManifest = {
+      const payloadHash = computeChangesetPayloadHash(deps.files, changesetRoot, changes);
+      const manifestBase = {
         schemaVersion: 1,
         changesetId,
         viewId: view.viewId,
@@ -92,11 +97,17 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
           modified: changes.filter((change) => change.kind === "modify").length,
           deleted: changes.filter((change) => change.kind === "delete").length,
           violations: violations.length
-        }
+        },
+        payloadHash
+      } satisfies Omit<ChangesetManifest, "operationHash">;
+      const manifest: ChangesetManifest = {
+        ...manifestBase,
+        operationHash: computeChangesetOperationHash(manifestBase)
       };
 
       deps.files.writeJson(join(changesetRoot, "manifest.json"), manifest);
       deps.files.writeText(join(changesetRoot, "diff.patch"), deps.git.diffNoIndex(baselineRoot, workspacePath));
+      deps.authority.sealChangesetReceipt(root, changesetRoot, createChangesetReceipt(manifest));
       return manifest;
     },
 
@@ -112,17 +123,19 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
 
       const changesetRoot = resolveChangesetPath(deps.files, cwd, changesetInput);
       const manifest = deps.files.readJson<ChangesetManifest>(join(changesetRoot, "manifest.json"));
+      assertChangesetIntegrity(deps.files, changesetRoot, manifest);
       const root = manifest.projectRoot;
+      assertChangesetReceipt(deps.authority.openChangesetReceipt(root, changesetRoot), manifest);
       const contract = deps.authority.getViewContract(root, manifest.viewId);
       const authorityReport = deps.authority.verify(root);
-      if (!authorityReport.ok) {
+      if (authorityReport.errors.length > 0) {
         throw new AwbsError(`Authority verification failed:\n${authorityReport.errors.join("\n")}`);
       }
 
       if (manifest.status !== "valid" || manifest.violations.length > 0) {
         throw new AwbsError(`Changeset ${manifest.changesetId} is invalid and cannot be applied.`);
       }
-      const forbiddenChanges = manifest.changes.filter((change) => !isPathUnderAny(change.path, contract.writePaths));
+      const forbiddenChanges = manifest.changes.filter((change) => !isPathAllowedByWritePaths(change.path, contract.writePaths));
       if (forbiddenChanges.length > 0) {
         throw new AwbsError(`Changeset ${manifest.changesetId} modifies read-only path(s) and cannot be applied.`);
       }
@@ -137,46 +150,35 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
       }
 
       const workspaceRel = toPosixPath(relative(root, manifest.workspacePath));
-      const dirty = filterIgnoredStatus(deps.git.statusPorcelain(root), root, [workspaceRel, ".awbs/authority"]);
+      const dirty = filterIgnoredStatus(deps.git.statusPorcelain(root), root, [workspaceRel, ...preApplyAuthorityPaths(deps, root)]);
       const head = deps.git.headCommit(root);
       const canApplyInPlace = head === currentTrustedCommit && dirty.trim().length === 0;
       const applyTargetRoot = canApplyInPlace ? root : null;
       const applyInTarget = (targetRoot: string): { commit: string | null; applied: number } => {
         if (targetRoot !== root) {
-          copyCurrentAuthorityMaterial(root, targetRoot);
+          copyPreApplyAuthorityMaterial(deps, root, targetRoot);
         }
         const appliedPaths = applyFilesToTarget(deps, changesetRoot, manifest, targetRoot);
         if (appliedPaths.length === 0) {
           return { commit: null, applied: 0 };
         }
 
-        const ledgerEntry = {
+        const changesetManifestHash = contentHash(manifest);
+        const authorityContractHash = contentHash(contract);
+        const ledgerEntry = deps.authority.recordChangesetApply(targetRoot, {
           schemaVersion: 1,
-          entryId: randomUUID(),
-          kind: "changeset",
           parentTrustedCommit: currentTrustedCommit,
           baseCommit: contract.baseCommit,
           changesetId: manifest.changesetId,
           viewId: manifest.viewId,
-          createdAt: new Date().toISOString(),
           appliedPaths,
-          changesetManifestHash: contentHash(manifest),
-          authorityContractHash: contentHash(contract),
-          operationHash: contentHash({
-            kind: "changeset",
-            parentTrustedCommit: currentTrustedCommit,
-            baseCommit: contract.baseCommit,
-            changesetId: manifest.changesetId,
-            viewId: manifest.viewId,
-            appliedPaths,
-            changesetManifestHash: contentHash(manifest),
-            authorityContractHash: contentHash(contract)
-          }),
+          changesetManifestHash,
+          changesetPayloadHash: manifest.payloadHash,
+          authorityContractHash,
           ext: {}
-        } as const;
-
-        deps.authority.appendLedgerEntry(targetRoot, ledgerEntry);
-        deps.git.addAll(targetRoot, [...appliedPaths.map(fromPosixPath), ".awbs/authority"]);
+        });
+        deps.authority.repairMirrors(targetRoot);
+        deps.git.addAll(targetRoot, [...appliedPaths.map(fromPosixPath), ...authorityCommitPaths(deps, targetRoot)]);
         deps.git.commit(
           targetRoot,
           [
@@ -249,12 +251,21 @@ function applyFilesToTarget(
   manifest: ChangesetManifest,
   targetRoot: string
 ): string[] {
+  for (const change of manifest.changes) {
+    if (!change.allowed) {
+      continue;
+    }
+    assertUserDataPath(change.path, "apply changes to");
+    if (change.kind !== "delete") {
+      assertPayloadRecord(deps.files, changesetRoot, change);
+    }
+  }
+
   const appliedPaths: string[] = [];
   for (const change of manifest.changes) {
     if (!change.allowed) {
       continue;
     }
-    assertSafeRelativePath(change.path);
     const target = join(targetRoot, fromPosixPath(change.path));
     if (change.kind === "delete") {
       deps.files.removePath(target);
@@ -270,6 +281,76 @@ function applyFilesToTarget(
   return appliedPaths;
 }
 
+function dataPathPolicyError(path: string): string | null {
+  try {
+    assertUserDataPath(path, "include in a changeset");
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function assertChangesetIntegrity(files: FileDatabasePort, changesetRoot: string, manifest: ChangesetManifest): void {
+  for (const change of manifest.changes) {
+    assertUserDataPath(change.path, "apply changes to");
+    if (change.kind !== "delete" && change.allowed) {
+      assertPayloadRecord(files, changesetRoot, change);
+    }
+  }
+
+  const payloadHash = computeChangesetPayloadHash(files, changesetRoot, manifest.changes);
+  if (payloadHash !== manifest.payloadHash) {
+    throw new AwbsError(`Changeset payload hash mismatch for ${manifest.changesetId}.`);
+  }
+
+  const operationHash = computeChangesetOperationHash({
+    ...manifest,
+    operationHash: undefined
+  });
+  if (operationHash !== manifest.operationHash) {
+    throw new AwbsError(`Changeset operation hash mismatch for ${manifest.changesetId}.`);
+  }
+}
+
+function assertPayloadRecord(files: FileDatabasePort, changesetRoot: string, change: ChangeRecord): void {
+  if (!change.file) {
+    throw new AwbsError(`Missing file payload for ${change.path}`);
+  }
+  assertSafeRelativePath(change.file);
+  if (!change.file.startsWith("files/")) {
+    throw new AwbsError(`Invalid file payload path for ${change.path}`);
+  }
+  const payload = join(changesetRoot, fromPosixPath(change.file));
+  if (!files.pathExists(payload)) {
+    throw new AwbsError(`Missing file payload for ${change.path}`);
+  }
+  const actualSha = files.sha256File(payload);
+  if (actualSha !== change.sha256) {
+    throw new AwbsError(`Changeset payload sha256 mismatch for ${change.path}.`);
+  }
+}
+
+function computeChangesetPayloadHash(files: FileDatabasePort, changesetRoot: string, changes: ChangeRecord[]): string {
+  const payloads = changes
+    .filter((change) => change.allowed && change.kind !== "delete")
+    .map((change) => {
+      assertPayloadRecord(files, changesetRoot, change);
+      return {
+        path: change.path,
+        kind: change.kind,
+        file: change.file,
+        sha256: change.sha256
+      };
+    })
+    .sort((a, b) => a.path.localeCompare(b.path));
+  return contentHash(payloads);
+}
+
+function computeChangesetOperationHash(manifest: Omit<ChangesetManifest, "operationHash"> | (ChangesetManifest & { operationHash?: string | undefined })): string {
+  const { operationHash: _operationHash, ...operation } = manifest as ChangesetManifest & { operationHash?: string };
+  return contentHash(operation);
+}
+
 function resolveChangesetPath(files: FileDatabasePort, cwd: string, input: string): string {
   const direct = resolve(cwd, input);
   if (files.pathExists(join(direct, "manifest.json"))) {
@@ -283,6 +364,35 @@ function resolveChangesetPath(files: FileDatabasePort, cwd: string, input: strin
   throw new AwbsError(`Changeset not found: ${input}`);
 }
 
+function createChangesetReceipt(manifest: ChangesetManifest): AuthorityChangesetReceipt {
+  return {
+    schemaVersion: 1,
+    changesetId: manifest.changesetId,
+    viewId: manifest.viewId,
+    baseCommit: manifest.baseCommit,
+    createdAt: new Date().toISOString(),
+    payloadHash: manifest.payloadHash,
+    operationHash: manifest.operationHash,
+    manifestHash: contentHash(manifest),
+    ext: {}
+  };
+}
+
+function assertChangesetReceipt(receipt: AuthorityChangesetReceipt, manifest: ChangesetManifest): void {
+  if (receipt.changesetId !== manifest.changesetId || receipt.viewId !== manifest.viewId || receipt.baseCommit !== manifest.baseCommit) {
+    throw new AwbsError(`Changeset receipt identity mismatch for ${manifest.changesetId}.`);
+  }
+  if (receipt.payloadHash !== manifest.payloadHash) {
+    throw new AwbsError(`Changeset receipt payload hash mismatch for ${manifest.changesetId}.`);
+  }
+  if (receipt.operationHash !== manifest.operationHash) {
+    throw new AwbsError(`Changeset receipt operation hash mismatch for ${manifest.changesetId}.`);
+  }
+  if (receipt.manifestHash !== contentHash(manifest)) {
+    throw new AwbsError(`Changeset receipt manifest hash mismatch for ${manifest.changesetId}.`);
+  }
+}
+
 function assertWorkspaceMatchesContract(workspacePath: string, contractWorkspacePath: unknown): void {
   if (typeof contractWorkspacePath !== "string") {
     return;
@@ -290,4 +400,38 @@ function assertWorkspaceMatchesContract(workspacePath: string, contractWorkspace
   if (resolve(contractWorkspacePath) !== workspacePath) {
     throw new AwbsError("Workspace path does not match the sealed view contract.");
   }
+}
+
+function authorityCommitPaths(deps: { files: FileDatabasePort; authority: AuthorityPort }, root: string): string[] {
+  const catalog = deps.authority.readCatalog(root);
+  const candidates = [
+    ".awbs/authority/catalog.seal.json",
+    ".awbs/authority/catalog.mirror.json",
+    ".awbs/authority/view-events.jsonl",
+    ".awbs/authority/ledger-events.jsonl",
+    ".awbs/authority/ledger.seal.json",
+    ".awbs/authority/ledger.mirror.json",
+    ...viewAuthorityPaths(catalog)
+  ];
+  return candidates.filter((path) => deps.files.pathExists(join(root, fromPosixPath(path))));
+}
+
+function preApplyAuthorityPaths(deps: { files: FileDatabasePort; authority: AuthorityPort }, root: string): string[] {
+  const catalog = deps.authority.readCatalog(root);
+  const candidates = [".awbs/authority/catalog.seal.json", ".awbs/authority/catalog.mirror.json", ".awbs/authority/view-events.jsonl", ...viewAuthorityPaths(catalog)];
+  return candidates.filter((path) => deps.files.pathExists(join(root, fromPosixPath(path))));
+}
+
+function copyPreApplyAuthorityMaterial(deps: { files: FileDatabasePort; authority: AuthorityPort }, root: string, targetRoot: string): void {
+  for (const path of preApplyAuthorityPaths(deps, root)) {
+    deps.files.copyPath(join(root, fromPosixPath(path)), join(targetRoot, fromPosixPath(path)));
+  }
+}
+
+function viewAuthorityPaths(catalog: AuthorityCatalog): string[] {
+  return catalog.views.flatMap((view) => [
+    `.awbs/authority/views/${view.viewId}/contract.seal.json`,
+    `.awbs/authority/views/${view.viewId}/mirror.json`,
+    `.awbs/authority/views/${view.viewId}/receipt.json`
+  ]);
 }

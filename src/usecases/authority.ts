@@ -26,11 +26,11 @@ export function createAuthorityUseCases(deps: { files: FileDatabasePort; authori
         `Authority: ${report.ok ? "ok" : "failed"}`,
         `Views: ${report.catalog.views}`,
         `Resources: ${report.catalog.resources}`,
-        `Repaired mirrors: ${report.repairedMirrors.length}`
+        `Mirror mismatches: ${report.mirrorMismatches.length}`
       ];
-      if (report.repairedMirrors.length > 0) {
-        lines.push("", "Repaired:");
-        for (const mirror of report.repairedMirrors) {
+      if (report.mirrorMismatches.length > 0) {
+        lines.push("", "Mismatched mirrors:");
+        for (const mirror of report.mirrorMismatches) {
           lines.push(`  ${mirror}`);
         }
       }

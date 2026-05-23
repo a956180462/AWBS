@@ -25,13 +25,17 @@
   "files": [
     "src",
     "AWBS_CORE_DESIGN.md",
+    "AWBS_CURRENT_FEATURES.md",
     "TASK_001_VIEW_AUTHORITY.md",
     "TASK_003_AUTHORITY_LEDGER_AND_DB_AUDIT.md",
-    "TASK_004_TRUSTED_AUTHORITY_LAYER.md"
+    "TASK_004_TRUSTED_AUTHORITY_LAYER.md",
+    "TASK_005_AUTHORITY_SESSION.md",
+    "TASK_006_TRUST_BOUNDARY_HARDENING.md",
+    "TASK_007_TRUSTED_OPERATION_ENTRY.md"
   ],
   "scripts": {
     "awbs": "node src/cli.ts",
-    "test": "node --test tests/*.test.ts"
+    "test": "node --test --test-concurrency=1 tests/*.test.ts"
   },
   "engines": {
     "node": ">=24.0.0"

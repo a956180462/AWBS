@@ -1,5 +1,6 @@
 import { TRUSTED_REF } from "../domain/constants.ts";
 import { AwbsError } from "../domain/errors.ts";
+import { contentHash } from "../domain/hash.ts";
 import type { AuthorityLedger, AuthorityLedgerInspectReport } from "../domain/authority-types.ts";
 import { filterIgnoredStatus } from "../domain/paths.ts";
 import type { AuthorityPort } from "../ports/authority.ts";
@@ -94,6 +95,9 @@ export function inspectTrustedLedger(
       if (!headEntry) {
         errors.push("Trusted ledger head entry is missing.");
       }
+      if (ledger) {
+        errors.push(...verifyLedgerHashChain(ledger));
+      }
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
@@ -107,4 +111,36 @@ export function inspectTrustedLedger(
     errors,
     ledger
   };
+}
+
+function verifyLedgerHashChain(ledger: AuthorityLedger): string[] {
+  const errors: string[] = [];
+  let previousHash: string | null = null;
+  const seen = new Set<string>();
+
+  for (const entry of ledger.entries) {
+    if (seen.has(entry.entryId)) {
+      errors.push(`Duplicate ledger entry id: ${entry.entryId}`);
+    }
+    seen.add(entry.entryId);
+
+    if (entry.previousEntryHash !== previousHash) {
+      errors.push(`Ledger entry ${entry.entryId} does not link to the previous entry hash.`);
+    }
+    if (entry.entryHash !== ledgerEntryHash(entry)) {
+      errors.push(`Ledger entry ${entry.entryId} hash mismatch.`);
+    }
+    previousHash = entry.entryHash;
+  }
+
+  const last = ledger.entries.at(-1);
+  if (last && ledger.headEntryId !== last.entryId) {
+    errors.push("Trusted ledger head entry is not the latest ledger entry.");
+  }
+  return errors;
+}
+
+function ledgerEntryHash(entry: AuthorityLedger["entries"][number]): string {
+  const { entryHash: _entryHash, ...hashable } = entry;
+  return contentHash(hashable);
 }

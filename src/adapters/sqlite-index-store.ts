@@ -14,7 +14,7 @@ export class SqliteIndexStoreAdapter implements IndexStorePort {
     this.files = files;
   }
 
-  readIndex(indexFile: string, legacyIndexFile?: string): IndexEntry[] {
+  readIndex(indexFile: string): IndexEntry[] {
     if (this.files.pathExists(indexFile)) {
       const db = new DatabaseSync(indexFile);
       try {
@@ -24,15 +24,6 @@ export class SqliteIndexStoreAdapter implements IndexStorePort {
         db.close();
       }
     }
-
-    if (legacyIndexFile && this.files.pathExists(legacyIndexFile)) {
-      const content = this.files.readText(legacyIndexFile).trim();
-      if (!content) {
-        return [];
-      }
-      return content.split(/\r?\n/).map((line) => JSON.parse(line) as IndexEntry);
-    }
-
     return [];
   }
 

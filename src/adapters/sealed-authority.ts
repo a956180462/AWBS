@@ -1,8 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { AwbsError } from "../domain/errors.ts";
 import type {
   AuthorityCatalog,
+  AuthorityChangesetApplyOperation,
+  AuthorityChangesetReceipt,
   AuthorityEvent,
   AuthorityLedger,
   AuthorityLedgerEntry,
@@ -19,14 +21,17 @@ import type {
 } from "../domain/authority-types.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { AuthorityPort } from "../ports/authority.ts";
+import type { ChangesetManifest } from "../domain/types.ts";
 
 const RUNTIME_PEPPER = "awbs-authority-runtime-context-v1";
 
 export class SealedAuthorityAdapter implements AuthorityPort {
   private readonly files: FileDatabasePort;
+  private readonly memoryLocal: AuthorityLocal | null;
 
-  constructor(files: FileDatabasePort) {
+  constructor(files: FileDatabasePort, options: { memoryLocal?: AuthorityLocal } = {}) {
     this.files = files;
+    this.memoryLocal = options.memoryLocal ?? null;
   }
 
   ensureInitialized(root: string): void {
@@ -45,12 +50,15 @@ export class SealedAuthorityAdapter implements AuthorityPort {
         authoritySalt: randomBytes(24).toString("base64"),
         algorithm: "AWBS-AES-256-GCM-v1",
         kdf: "scrypt-repo-local-runtime-v1",
+        trustMode: "ephemeral-local-key-v1",
         createdAt: new Date().toISOString()
       };
       this.files.writeJson(repoPath, repo);
+    } else {
+      this.assertRepoTrustMode(root);
     }
 
-    if (!this.files.pathExists(localPath)) {
+    if (!this.memoryLocal && !this.files.pathExists(localPath)) {
       const local: AuthorityLocal = {
         schemaVersion: 1,
         installationId: randomUUID(),
@@ -94,7 +102,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     }
   }
 
-  createViewContract(root: string, contract: AuthorityViewContract): AuthorityViewContract {
+  createView(root: string, contract: AuthorityViewContract): AuthorityViewContract {
     this.ensureInitialized(root);
     const viewDir = this.viewDir(root, contract.viewId);
     if (this.files.pathExists(join(viewDir, "contract.seal.json"))) {
@@ -184,15 +192,14 @@ export class SealedAuthorityAdapter implements AuthorityPort {
 
   verify(root: string): AuthorityVerifyReport {
     const errors: string[] = [];
-    const repairedMirrors: string[] = [];
+    const mirrorMismatches: string[] = [];
     let catalog: AuthorityCatalog | null = null;
-    const catalogMirrorBefore = this.readOptionalText(this.catalogMirrorPath(root));
 
     try {
-      this.ensureInitialized(root);
-      catalog = this.readCatalog(root);
-      if (catalogMirrorBefore !== this.readOptionalText(this.catalogMirrorPath(root))) {
-        repairedMirrors.push("catalog.mirror.json");
+      this.ensureInitializedNoCatalogRead(root);
+      catalog = this.openSeal<AuthorityCatalog>(root, this.catalogSealPath(root), "authority.catalog");
+      if (this.readOptionalText(this.catalogMirrorPath(root)) !== mirrorText(catalog)) {
+        mirrorMismatches.push("catalog.mirror.json");
       }
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
@@ -201,11 +208,9 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     if (catalog) {
       for (const view of catalog.views) {
         try {
-          const before = this.readOptionalText(this.viewMirrorPath(root, view.viewId));
-          this.openViewContract(root, view.viewId);
-          const after = this.readOptionalText(this.viewMirrorPath(root, view.viewId));
-          if (before !== after) {
-            repairedMirrors.push(`views/${view.viewId}/mirror.json`);
+          const contract = this.openSeal<AuthorityViewContract>(root, this.viewSealPath(root, view.viewId), "authority.viewContract");
+          if (this.readOptionalText(this.viewMirrorPath(root, view.viewId)) !== mirrorText(contract)) {
+            mirrorMismatches.push(`views/${view.viewId}/mirror.json`);
           }
         } catch (error) {
           errors.push(error instanceof Error ? error.message : String(error));
@@ -215,11 +220,9 @@ export class SealedAuthorityAdapter implements AuthorityPort {
 
     if (this.hasLedger(root)) {
       try {
-        const before = this.readOptionalText(this.ledgerMirrorPath(root));
-        this.readLedger(root);
-        const after = this.readOptionalText(this.ledgerMirrorPath(root));
-        if (before !== after) {
-          repairedMirrors.push("ledger.mirror.json");
+        const ledger = this.openSeal<AuthorityLedger>(root, this.ledgerSealPath(root), "authority.ledger");
+        if (this.readOptionalText(this.ledgerMirrorPath(root)) !== mirrorText(ledger)) {
+          mirrorMismatches.push("ledger.mirror.json");
         }
       } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error));
@@ -227,8 +230,8 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     }
 
     return {
-      ok: errors.length === 0,
-      repairedMirrors,
+      ok: errors.length === 0 && mirrorMismatches.length === 0,
+      mirrorMismatches,
       errors,
       catalog: {
         views: catalog?.views.length ?? 0,
@@ -282,9 +285,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
 
   readCatalog(root: string): AuthorityCatalog {
     this.ensureInitializedNoCatalogRead(root);
-    const catalog = this.openSeal<AuthorityCatalog>(root, this.catalogSealPath(root), "authority.catalog");
-    this.writeMirror(this.catalogMirrorPath(root), catalog);
-    return catalog;
+    return this.openSeal<AuthorityCatalog>(root, this.catalogSealPath(root), "authority.catalog");
   }
 
   hasLedger(root: string): boolean {
@@ -298,10 +299,11 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     }
     const now = new Date().toISOString();
     const repo = this.readRepo(root);
-    const entry: AuthorityLedgerEntry = {
+    const entryBase: Omit<AuthorityLedgerEntry, "entryHash"> = {
       schemaVersion: 1,
       entryId: randomUUID(),
       kind: "bootstrap",
+      previousEntryHash: null,
       parentTrustedCommit,
       baseCommit: parentTrustedCommit,
       changesetId: null,
@@ -309,6 +311,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
       createdAt: now,
       appliedPaths: [],
       changesetManifestHash: null,
+      changesetPayloadHash: null,
       authorityContractHash: null,
       operationHash: contentHash({
         kind: "bootstrap",
@@ -317,6 +320,10 @@ export class SealedAuthorityAdapter implements AuthorityPort {
         createdAt: now
       }),
       ext: {}
+    };
+    const entry: AuthorityLedgerEntry = {
+      ...entryBase,
+      entryHash: ledgerEntryHash(entryBase)
     };
     const ledger: AuthorityLedger = {
       schemaVersion: 1,
@@ -341,16 +348,51 @@ export class SealedAuthorityAdapter implements AuthorityPort {
 
   readLedger(root: string): AuthorityLedger {
     this.ensureInitializedNoCatalogRead(root);
-    const ledger = this.openSeal<AuthorityLedger>(root, this.ledgerSealPath(root), "authority.ledger");
-    this.writeMirror(this.ledgerMirrorPath(root), ledger);
-    return ledger;
+    return this.openSeal<AuthorityLedger>(root, this.ledgerSealPath(root), "authority.ledger");
   }
 
-  appendLedgerEntry(root: string, entry: AuthorityLedgerEntry): AuthorityLedger {
+  recordChangesetApply(root: string, operation: AuthorityChangesetApplyOperation): AuthorityLedgerEntry {
     const ledger = this.readLedger(root);
-    if (ledger.entries.some((existing) => existing.entryId === entry.entryId)) {
-      throw new AwbsError(`Ledger entry already exists: ${entry.entryId}`);
+    if (operation.schemaVersion !== 1) {
+      throw new AwbsError("Invalid changeset apply operation schema.");
     }
+    const entryId = randomUUID();
+    const createdAt = operation.createdAt ?? new Date().toISOString();
+    const headEntry = ledger.entries.find((existing) => existing.entryId === ledger.headEntryId);
+    if (!headEntry) {
+      throw new AwbsError("Trusted ledger head entry is missing.");
+    }
+    const entryBase: Omit<AuthorityLedgerEntry, "entryHash"> = {
+      schemaVersion: 1,
+      entryId,
+      kind: "changeset",
+      previousEntryHash: headEntry.entryHash,
+      parentTrustedCommit: operation.parentTrustedCommit,
+      baseCommit: operation.baseCommit,
+      changesetId: operation.changesetId,
+      viewId: operation.viewId,
+      createdAt,
+      appliedPaths: operation.appliedPaths,
+      changesetManifestHash: operation.changesetManifestHash,
+      changesetPayloadHash: operation.changesetPayloadHash,
+      authorityContractHash: operation.authorityContractHash,
+      operationHash: contentHash({
+        kind: "changeset",
+        parentTrustedCommit: operation.parentTrustedCommit,
+        baseCommit: operation.baseCommit,
+        changesetId: operation.changesetId,
+        viewId: operation.viewId,
+        appliedPaths: operation.appliedPaths,
+        changesetManifestHash: operation.changesetManifestHash,
+        changesetPayloadHash: operation.changesetPayloadHash,
+        authorityContractHash: operation.authorityContractHash
+      }),
+      ext: operation.ext
+    };
+    const entry: AuthorityLedgerEntry = {
+      ...entryBase,
+      entryHash: ledgerEntryHash(entryBase)
+    };
     const now = new Date().toISOString();
     const nextLedger: AuthorityLedger = {
       ...ledger,
@@ -372,7 +414,27 @@ export class SealedAuthorityAdapter implements AuthorityPort {
         parentTrustedCommit: entry.parentTrustedCommit
       }
     });
-    return nextLedger;
+    return entry;
+  }
+
+  sealChangesetReceipt(root: string, changesetRoot: string, receipt: AuthorityChangesetReceipt): AuthorityChangesetReceipt {
+    this.ensureInitializedNoCatalogRead(root);
+    this.assertChangesetReceiptScope(root, changesetRoot, receipt);
+    const receiptPath = this.changesetReceiptPath(changesetRoot);
+    this.writeSeal(root, receiptPath, "authority.changesetReceipt", receipt, {
+      changesetId: receipt.changesetId,
+      viewId: receipt.viewId,
+      baseCommit: receipt.baseCommit
+    });
+    return receipt;
+  }
+
+  openChangesetReceipt(root: string, changesetRoot: string): AuthorityChangesetReceipt {
+    this.ensureInitializedNoCatalogRead(root);
+    const manifest = this.files.readJson<ChangesetManifest>(join(changesetRoot, "manifest.json"));
+    const receipt = this.openSeal<AuthorityChangesetReceipt>(root, this.changesetReceiptPath(changesetRoot), "authority.changesetReceipt");
+    this.assertChangesetReceiptScope(root, changesetRoot, receipt, manifest);
+    return receipt;
   }
 
   private ensureInitializedNoCatalogRead(root: string): void {
@@ -381,7 +443,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
     if (!this.files.pathExists(this.repoPath(root))) {
       throw new AwbsError("Authority repo is not initialized. Run `awbs init` first.");
     }
-    if (!this.files.pathExists(this.localPath(root))) {
+    if (!this.hasLocalMaterial(root)) {
       throw new AwbsError("Authority local material is missing. Run `awbs init` or restore .awbs/private/local.json.");
     }
   }
@@ -424,15 +486,20 @@ export class SealedAuthorityAdapter implements AuthorityPort {
   }
 
   private openViewContract(root: string, viewId: string): AuthorityViewContract {
-    const contract = this.openSeal<AuthorityViewContract>(root, this.viewSealPath(root, viewId), "authority.viewContract");
-    this.writeMirror(this.viewMirrorPath(root, viewId), contract);
-    return contract;
+    return this.openSeal<AuthorityViewContract>(root, this.viewSealPath(root, viewId), "authority.viewContract");
   }
 
   private writeSeal(root: string, path: string, payloadType: "authority.catalog", payload: AuthorityCatalog, aad: Record<string, unknown>): void;
   private writeSeal(root: string, path: string, payloadType: "authority.viewContract", payload: AuthorityViewContract, aad: Record<string, unknown>): void;
   private writeSeal(root: string, path: string, payloadType: "authority.ledger", payload: AuthorityLedger, aad: Record<string, unknown>): void;
-  private writeSeal(root: string, path: string, payloadType: AuthorityPayloadType, payload: AuthorityCatalog | AuthorityViewContract | AuthorityLedger, aad: Record<string, unknown>): void {
+  private writeSeal(root: string, path: string, payloadType: "authority.changesetReceipt", payload: AuthorityChangesetReceipt, aad: Record<string, unknown>): void;
+  private writeSeal(
+    root: string,
+    path: string,
+    payloadType: AuthorityPayloadType,
+    payload: AuthorityCatalog | AuthorityViewContract | AuthorityLedger | AuthorityChangesetReceipt,
+    aad: Record<string, unknown>
+  ): void {
     const key = this.deriveKey(root);
     const nonce = randomBytes(12);
     const plaintext = Buffer.from(canonicalJson(payload), "utf8");
@@ -482,13 +549,31 @@ export class SealedAuthorityAdapter implements AuthorityPort {
 
   private deriveKey(root: string): Buffer {
     const repo = this.readRepo(root);
-    const local = this.files.readJson<AuthorityLocal>(this.localPath(root));
+    const local = this.readLocal(root);
     const password = `${local.localSealSeed}:${local.installationId}:${repo.repoId}:${RUNTIME_PEPPER}`;
     return scryptSync(password, Buffer.from(repo.authoritySalt, "base64"), 32, { N: 16384, r: 8, p: 1 });
   }
 
   private readRepo(root: string): AuthorityRepo {
     return this.files.readJson<AuthorityRepo>(this.repoPath(root));
+  }
+
+  private assertRepoTrustMode(root: string): void {
+    const repo = this.readRepo(root);
+    if (repo.trustMode !== "ephemeral-local-key-v1") {
+      throw new AwbsError("Authority repo trustMode is not ephemeral-local-key-v1. Reinitialize this development database with the current AWBS version.");
+    }
+  }
+
+  private readLocal(root: string): AuthorityLocal {
+    if (this.memoryLocal) {
+      return this.memoryLocal;
+    }
+    return this.files.readJson<AuthorityLocal>(this.localPath(root));
+  }
+
+  private hasLocalMaterial(root: string): boolean {
+    return Boolean(this.memoryLocal) || this.files.pathExists(this.localPath(root));
   }
 
   private appendEvent(root: string, event: AuthorityEvent): void {
@@ -558,6 +643,28 @@ export class SealedAuthorityAdapter implements AuthorityPort {
   private viewReceiptPath(root: string, viewId: string): string {
     return join(this.viewDir(root, viewId), "receipt.json");
   }
+
+  private changesetReceiptPath(changesetRoot: string): string {
+    return join(changesetRoot, "receipt.seal.json");
+  }
+
+  private assertChangesetReceiptScope(root: string, changesetRoot: string, receipt: AuthorityChangesetReceipt, manifest?: ChangesetManifest): void {
+    const expectedRoot = resolve(root, ".awbs", "changesets", receipt.changesetId);
+    if (resolve(changesetRoot) !== expectedRoot) {
+      throw new AwbsError(`Changeset receipt path does not match changeset id: ${receipt.changesetId}`);
+    }
+    const actualManifest = manifest ?? this.files.readJson<ChangesetManifest>(join(changesetRoot, "manifest.json"));
+    if (
+      actualManifest.changesetId !== receipt.changesetId ||
+      actualManifest.viewId !== receipt.viewId ||
+      actualManifest.baseCommit !== receipt.baseCommit ||
+      actualManifest.payloadHash !== receipt.payloadHash ||
+      actualManifest.operationHash !== receipt.operationHash ||
+      contentHash(actualManifest) !== receipt.manifestHash
+    ) {
+      throw new AwbsError(`Changeset receipt does not match manifest: ${receipt.changesetId}`);
+    }
+  }
 }
 
 function mergeResources(existing: AuthorityResource[], sources: AuthorityViewSource[]): AuthorityResource[] {
@@ -584,6 +691,15 @@ function parentPath(path: string): string | null {
 
 function contentHash(value: unknown): string {
   return sha256String(canonicalJson(value));
+}
+
+function ledgerEntryHash(entry: AuthorityLedgerEntry | Omit<AuthorityLedgerEntry, "entryHash">): string {
+  const { entryHash: _entryHash, ...hashable } = entry as AuthorityLedgerEntry;
+  return contentHash(hashable);
+}
+
+function mirrorText(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 function sha256String(value: string): string {

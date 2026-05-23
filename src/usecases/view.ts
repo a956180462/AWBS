@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { VIEW_MANIFEST } from "../domain/constants.ts";
 import { AwbsError } from "../domain/errors.ts";
+import { assertUserDataPaths } from "../domain/path-policy.ts";
 import { fromPosixPath, normalizeUserPaths } from "../domain/paths.ts";
 import type { AuthorityCatalogView, AuthorityViewContract, AuthorityViewSource } from "../domain/authority-types.ts";
 import type { IndexKind, ViewManifest } from "../domain/types.ts";
@@ -23,6 +24,7 @@ export function createViewUseCases(deps: { files: FileDatabasePort; git: GitPort
       deps.authority.ensureInitialized(root);
       const baseCommit = requireTrustedCommit(deps.git, root);
       const workspacePath = resolve(root, args.out);
+      assertWorkspaceOutputPath(root, workspacePath);
       deps.files.assertSafeOutputDirectory(workspacePath);
 
       const readPaths = normalizeUserPaths(args.readPaths);
@@ -30,11 +32,10 @@ export function createViewUseCases(deps: { files: FileDatabasePort; git: GitPort
       if (readPaths.length === 0 && writePaths.length === 0) {
         throw new AwbsError("view create requires at least one --read or --write path.");
       }
+      assertUserDataPaths(readPaths, "project");
+      assertUserDataPaths(writePaths, "project");
 
       const selectedPaths = uniquePaths([...readPaths, ...writePaths]);
-      for (const relPath of selectedPaths) {
-        assertNotPrivateAuthorityMaterial(relPath);
-      }
 
       const viewId = randomUUID();
       const baselineRoot = join(root, ".awbs", "views", viewId, "baseline");
@@ -89,7 +90,7 @@ export function createViewUseCases(deps: { files: FileDatabasePort; git: GitPort
         sources: contractSources,
         ext: { workspacePath }
       };
-      deps.authority.createViewContract(root, contract);
+      deps.authority.createView(root, contract);
 
       const manifest: ViewManifest = {
         schemaVersion: 1,
@@ -138,8 +139,28 @@ function uniquePaths(paths: string[]): string[] {
   return result;
 }
 
-function assertNotPrivateAuthorityMaterial(path: string): void {
-  if (path === ".awbs/private" || path.startsWith(".awbs/private/")) {
-    throw new AwbsError(".awbs/private is authority material and cannot be projected into a workspace.");
+function assertWorkspaceOutputPath(root: string, workspacePath: string): void {
+  const rootPath = resolve(root);
+  const outputPath = resolve(workspacePath);
+  if (outputPath === rootPath) {
+    throw new AwbsError("Workspace output cannot be the database root.");
   }
+
+  for (const reserved of [".awbs", ".git"]) {
+    const reservedPath = resolve(rootPath, reserved);
+    if (isSameOrInside(reservedPath, outputPath)) {
+      throw new AwbsError(`Workspace output cannot be inside AWBS reserved directory: ${reserved}`);
+    }
+  }
+}
+
+function isSameOrInside(parent: string, child: string): boolean {
+  const parentPath = pathKey(resolve(parent));
+  const childPath = pathKey(resolve(child));
+  const rel = relative(parentPath, childPath);
+  return childPath === parentPath || (!rel.startsWith("..") && !rel.includes(":"));
+}
+
+function pathKey(path: string): string {
+  return path.replace(/\\/g, "/").toLowerCase();
 }
