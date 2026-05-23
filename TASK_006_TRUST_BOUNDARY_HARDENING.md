@@ -172,7 +172,7 @@ Authority Service 应该只提供 applyVerifiedOperation 这类语义接口。
 - daemon 内部验证 trusted head、view contract、changeset payload、path policy。
 - controller token 只能授权语义操作，不能授权任意底层写入。
 
-### P1：ledger verify 还不足以称为可信链验证
+### P1：ledger verify 还不足以称为可信链验证（已修复）
 
 当前 ledger verify 更接近：
 
@@ -193,7 +193,7 @@ currentTrustedCommit
 refs/awbs/trusted
 ```
 
-如果没有 hash-linked ledger，AWBS 还不能严肃地说“整条链可验证”。
+如果没有 hash-linked ledger，AWBS 还不能严肃地说“整条链可验证”。当前实现已经把这一项推进到更硬的验证：不仅重算 ledger hash chain，还会把 `refs/awbs/trusted` 指向的 commit 和 ledger head entry 绑定校验。
 
 涉及位置：
 
@@ -208,6 +208,7 @@ refs/awbs/trusted
 - operationHash 覆盖 operation 输入、changeset payload hash、path list、base commit。
 - verify 从 genesis 一路重算到 current trusted entry。
 - verify 同时校验 `refs/awbs/trusted` 指向的 commit 与 ledger head 一致。
+- verify 校验 trusted commit parent、commit message、diff path 和 `appliedPathStates` 内容 hash。
 
 ### P1：session IPC 没有绑定死到启动 repo
 
@@ -363,8 +364,9 @@ Git 普通 HEAD 可以混乱。
 - changeset manifest 增加 `payloadHash` 和 `operationHash`。
 - changeset collect 会生成 authority-sealed receipt，apply 必须打开 receipt 并匹配 manifest / payload。
 - apply 前会先完成 path policy、payload sha256、payloadHash、operationHash、sealed receipt 校验，再执行写入。
-- ledger entry 增加 `previousEntryHash`、`entryHash`、`changesetPayloadHash`。
-- ledger append 会检查 entry 是否链接当前 head，ledger verify 会从头重算 entry hash 链。
+- ledger entry 增加 `previousEntryHash`、`entryHash`、`changesetPayloadHash`、`appliedPathStates`。
+- ledger append 会检查 entry 是否链接当前 head，ledger verify 会从头重算 entry hash 链，并校验 trusted commit 是否匹配 ledger head entry。
+- `view create`、`index rebuild`、`summary set/get`、`changeset apply` 读取 trusted commit 前会要求 trusted chain verification 通过。
 - session daemon 绑定启动 repo，并只允许同 repoId / 同 Git worktree 语义下的内部 trusted worktree 请求。
 - session start 不再自动迁移旧 repo trustMode；开发期仓库结构不兼容就应重新初始化。
 - summary set / get 改为基于 trusted commit 计算 sha，旧 sha 摘要不会静默套到新内容。

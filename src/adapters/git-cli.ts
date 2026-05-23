@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { AwbsError } from "../domain/errors.ts";
 import type { GitCommandResult, GitPort } from "../ports/git.ts";
@@ -42,6 +43,49 @@ export class GitCliAdapter implements GitPort {
   revList(root: string, range: string): string[] {
     const output = this.run(["rev-list", "--reverse", range], root).trim();
     return output ? output.split(/\r?\n/) : [];
+  }
+
+  commitParents(root: string, commit: string): string[] {
+    const output = this.run(["rev-list", "--parents", "-n", "1", commit], root).trim();
+    const parts = output.split(/\s+/).filter(Boolean);
+    return parts.slice(1);
+  }
+
+  commitMessage(root: string, commit: string): string {
+    return this.run(["log", "-1", "--format=%B", commit], root);
+  }
+
+  diffNameOnly(root: string, fromCommit: string, toCommit: string): string[] {
+    const output = this.run(["diff", "--name-only", "--no-renames", fromCommit, toCommit], root).trim();
+    return output ? output.split(/\r?\n/).filter(Boolean) : [];
+  }
+
+  pathExistsAtCommit(root: string, commit: string, path: string): boolean {
+    return this.runResult(["cat-file", "-e", `${commit}:${path}`], root).status === 0;
+  }
+
+  fileSha256AtCommit(root: string, commit: string, path: string): string {
+    const result = spawnSync("git", ["-C", root, "show", `${commit}:${path}`], {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    if (result.status !== 0) {
+      throw new AwbsError(`git show ${commit}:${path} failed:\n${result.stderr?.toString() ?? result.stdout?.toString() ?? ""}`);
+    }
+    return createHash("sha256").update(result.stdout ?? Buffer.alloc(0)).digest("hex");
+  }
+
+  pathExistsInIndex(root: string, path: string): boolean {
+    return this.runResult(["cat-file", "-e", `:${path}`], root).status === 0;
+  }
+
+  fileSha256InIndex(root: string, path: string): string {
+    const result = spawnSync("git", ["-C", root, "show", `:${path}`], {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    if (result.status !== 0) {
+      throw new AwbsError(`git show :${path} failed:\n${result.stderr?.toString() ?? result.stdout?.toString() ?? ""}`);
+    }
+    return createHash("sha256").update(result.stdout ?? Buffer.alloc(0)).digest("hex");
   }
 
   statusPorcelain(root: string): string {

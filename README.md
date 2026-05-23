@@ -48,6 +48,7 @@ init
 - 只读路径被修改时，changeset 会变成 invalid，apply 永远拒绝。
 - view revoke 后，基于该 view 的新 collect/apply 会被拒绝。
 - `awbs ledger bootstrap` 会创建 AWBS 可信数据链，并维护 `refs/awbs/trusted`。
+- `ledger verify` 不只检查 ref 是否存在；它会校验 trusted commit 的父提交、提交消息、变更路径和 ledger 记录的最终路径 hash。
 - `awbs authority session start` 会把本地 authority key 托管到同用户后台 session daemon，并删除磁盘 `local.json`。
 - 可信写入命令必须由 host controller 通过 stdin 提供 `controllerToken`。
 - `controllerToken` 不直接进入 session IPC；AWBS 使用带 nonce 的 HMAC controller proof，并要求可信写入成功响应带 response proof。
@@ -85,7 +86,9 @@ npm install -g @c956180462/awbs
 awbs --help
 ```
 
-如果曾经安装过 `0.0.1`，请升级到 `0.0.2` 或更新版本。`0.0.1` 的包入口仍指向 `.ts` 源码，在全局安装后可能触发 Node.js 的 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`。`0.0.2` 开始发布包会先编译到 `dist/`，全局命令加载的是 JavaScript。
+如果曾经安装过 `0.0.1`，请升级到 `0.0.2` 或更新版本。`0.0.1` 的包入口仍指向 `.ts` 源码，在全局安装后可能触发 Node.js 的 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`。`0.0.2+` 发布包会先编译到 `dist/`，全局命令加载的是 JavaScript。
+
+`0.0.3+` 进一步加固 trusted chain：`refs/awbs/trusted` 指向的 commit 必须被 sealed ledger head entry 解释，不能只靠手动改 Git ref 进入 AWBS 认证数据库。
 
 从本地仓库全局安装：
 
@@ -185,6 +188,7 @@ It already supports:
 - Stale base commit rejection.
 - Read-only authority verification and controller-token-gated mirror repair.
 - AWBS trusted chain bootstrap and verification.
+- Trusted commit binding verification: parent commit, commit message, changed paths, and applied path hashes must match the sealed ledger head entry.
 - Ephemeral local authority sessions for trusted writes.
 - Controller-token-gated trusted write commands.
 - Recovery-secret-based local key recovery after a crashed session.
@@ -220,7 +224,9 @@ npm install -g @c956180462/awbs
 awbs --help
 ```
 
-If you installed `0.0.1`, upgrade to `0.0.2` or later. Version `0.0.1` pointed the package bin at TypeScript source, which can fail under `node_modules` with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. Starting from `0.0.2`, the npm package runs compiled JavaScript from `dist/`.
+If you installed `0.0.1`, upgrade to `0.0.2` or later. Version `0.0.1` pointed the package bin at TypeScript source, which can fail under `node_modules` with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. Starting from `0.0.2+`, the npm package runs compiled JavaScript from `dist/`.
+
+Starting from `0.0.3+`, the trusted chain also binds `refs/awbs/trusted` to the sealed ledger head entry by checking commit parent, commit message, changed paths, and applied path hashes.
 
 Install from a local checkout:
 

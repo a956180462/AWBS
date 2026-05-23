@@ -63,6 +63,72 @@ test("external commits do not enter the AWBS trusted chain", () => {
   }
 });
 
+test("trusted ref retargeting is rejected by ledger verification", () => {
+  const project = mkdtempSync(join(tmpdir(), "awbs-trusted-ref-retarget-"));
+  try {
+    seedProject(project);
+
+    writeFileSync(join(project, "B", "polluted.md"), "ref pollution\n", "utf8");
+    git(project, ["add", "B/polluted.md"]);
+    git(project, ["commit", "-m", "external pollution"]);
+    const externalCommit = git(project, ["rev-parse", "HEAD"]).trim();
+    git(project, ["update-ref", "refs/awbs/trusted", externalCommit]);
+
+    const audit = JSON.parse(awbsFailAllowed(project, ["db", "audit", "--json"]).stdout);
+    assert.equal(audit.ok, false);
+    assert.ok(audit.errors.some((error: string) => error.includes("parentTrustedCommit")));
+
+    const index = awbsFailAllowed(project, ["index", "rebuild"]);
+    assert.match(index.stderr, /trusted chain verification failed/);
+  } finally {
+    safeStopSession(project);
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("trusted ref cannot point to a forged commit with copied ledger and altered payload", () => {
+  const project = mkdtempSync(join(tmpdir(), "awbs-trusted-forged-"));
+  try {
+    seedProject(project);
+    awbsToken(project, ["view", "create", "--out", "workspace", "--write", "B", "--control-token-stdin"]);
+    writeFileSync(join(project, "workspace", "B", "draft.md"), "legitimate trusted update\n", "utf8");
+    const collectOut = awbs(project, ["changeset", "collect", "--workspace", "workspace"]);
+    const changesetId = /Changeset collected: (\S+)/.exec(collectOut)?.[1];
+    assert.ok(changesetId);
+    awbsToken(project, ["changeset", "apply", changesetId, "--control-token-stdin"]);
+
+    const legitReport = JSON.parse(awbs(project, ["ledger", "inspect", "--json"]));
+    const legitCommit = legitReport.currentTrustedCommit;
+    const headEntry = legitReport.ledger.entries.at(-1);
+    const parent = headEntry.parentTrustedCommit;
+
+    git(project, ["checkout", "--detach", parent]);
+    git(project, ["checkout", legitCommit, "--", ".awbs/authority"]);
+    writeFileSync(join(project, "B", "draft.md"), "forged trusted content\n", "utf8");
+    git(project, ["add", "-A", "--", "B/draft.md", ".awbs/authority"]);
+    git(project, [
+      "commit",
+      "-m",
+      [
+        "awbs: apply forged changeset",
+        "",
+        `AWBS-Ledger-Entry: ${headEntry.entryId}`,
+        `AWBS-Operation-Hash: ${headEntry.operationHash}`,
+        `AWBS-Parent-Trusted-Commit: ${headEntry.parentTrustedCommit}`
+      ].join("\n")
+    ]);
+    const forgedCommit = git(project, ["rev-parse", "HEAD"]).trim();
+    git(project, ["update-ref", "refs/awbs/trusted", forgedCommit]);
+
+    const verify = JSON.parse(awbsFailAllowed(project, ["ledger", "verify", "--json"]).stdout);
+    assert.equal(verify.ok, false);
+    assert.ok(verify.errors.some((error: string) => error.includes("content hash mismatch")));
+  } finally {
+    safeStopSession(project);
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test("clean-rebuild swaps in a clean database from trusted commit and keeps backup", () => {
   const project = mkdtempSync(join(tmpdir(), "awbs-clean-rebuild-"));
   let backupPath: string | null = null;

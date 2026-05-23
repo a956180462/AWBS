@@ -158,6 +158,8 @@ entryHash
 operationHash
 parentTrustedCommit
 currentTrustedCommit
+appliedPaths
+appliedPathStates
 createdAt
 ```
 
@@ -167,7 +169,8 @@ createdAt
 - `entryHash` 是当前 entry 的 canonical hash。
 - `operationHash` 是本次 operation 全部关键材料的 hash。
 - `parentTrustedCommit` 是本次操作基于的上一个 trusted commit。
-- `currentTrustedCommit` 是本次操作推进后的 trusted commit。
+- `currentTrustedCommit` 是 `refs/awbs/trusted` 当前指向的 commit；实现上不把 result commit 自引用写入同一个 sealed entry，而是通过 ref、commit parent、commit message、diff path 和 `appliedPathStates` 共同验证。
+- `appliedPathStates` 记录本次 operation 后关键业务路径的最终状态，用来阻止复制旧 ledger 后替换文件内容的伪造 commit。
 
 链式关系是：
 
@@ -265,6 +268,7 @@ AWBS core 不应该在没有 authority session 的情况下进入可信写入状
    sealed catalog
    sealed ledger
    refs/awbs/trusted
+   trusted commit binding
 
 5. 启动 AWBS core
    只有 authority ready 后，可信写入才允许执行

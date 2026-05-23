@@ -246,8 +246,9 @@ awbs authority repair-mirrors [--json]
 
 - AWBS 认证数据库不是普通 Git `HEAD`。
 - AWBS 认证数据库也不是当前工作区文件。
-- AWBS 认证数据库等于 `refs/awbs/trusted` 指向的 Git tree。
+- AWBS 认证数据库等于 `refs/awbs/trusted` 指向的 Git tree，加 sealed ledger head entry 的可验证解释。
 - sealed ledger 记录 AWBS 承认的可信状态推进。
+- `refs/awbs/trusted` 不能单独作为事实源；其 commit 必须匹配 ledger head entry 的父提交、提交消息、变更路径和最终内容 hash。
 
 已实现材料：
 
@@ -297,6 +298,7 @@ awbs db backups list [--json]
 - 工作区是否 dirty。
 - 是否存在外部 commit。
 - authority/ledger 是否可验证。
+- trusted commit 是否和 ledger head entry 绑定一致。
 
 `db clean-rebuild` 能：
 

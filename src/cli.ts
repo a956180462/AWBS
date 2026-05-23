@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   }
 
   if (domain === "index" && action === "rebuild") {
-    const runtime = createDefaultRuntime({ cliPath });
+    const runtime = createDefaultRuntime({ cliPath, authorityMode: "auto" });
     const result = runtime.usecases.index.rebuildIndex(cwd);
     console.log(`Index rebuilt: ${result.active} active, ${result.removed} removed -> ${result.path}`);
     return;
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   }
 
   if (domain === "summary" && action === "set") {
-    const runtime = createDefaultRuntime({ cliPath });
+    const runtime = createDefaultRuntime({ cliPath, authorityMode: "auto" });
     const target = parsed.positionals[0];
     if (!target) {
       throw new AwbsError("summary set requires a path.");
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
   }
 
   if (domain === "summary" && action === "get") {
-    const runtime = createDefaultRuntime({ cliPath });
+    const runtime = createDefaultRuntime({ cliPath, authorityMode: "auto" });
     const target = parsed.positionals[0];
     if (!target) {
       throw new AwbsError("summary get requires a path.");

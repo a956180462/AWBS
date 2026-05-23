@@ -5,11 +5,12 @@ import { contentHash } from "../domain/hash.ts";
 import { assertUserDataPath, isPathAllowedByWritePaths } from "../domain/path-policy.ts";
 import { assertSafeRelativePath, filterIgnoredStatus, fromPosixPath, isPathUnderAny, makeId, toPosixPath } from "../domain/paths.ts";
 import type { ChangeKind, ChangeRecord, ChangesetManifest, ViewManifest } from "../domain/types.ts";
-import type { AuthorityCatalog, AuthorityChangesetReceipt } from "../domain/authority-types.ts";
+import type { AuthorityAppliedPathState, AuthorityCatalog, AuthorityChangesetReceipt } from "../domain/authority-types.ts";
 import type { AuthorityPort } from "../ports/authority.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { GitPort } from "../ports/git.ts";
-import { requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
+import { requireVerifiedTrustedCommit } from "./ledger.ts";
+import { withTrustedWorktree } from "./trusted-chain.ts";
 
 export type ChangesetUseCases = {
   collectChangeset(cwd: string, workspaceInput: string): ChangesetManifest;
@@ -144,7 +145,7 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
         throw new AwbsError(`Changeset base ${manifest.baseCommit} does not match sealed view contract base ${contract.baseCommit}.`);
       }
 
-      const currentTrustedCommit = requireTrustedCommit(deps.git, root);
+      const currentTrustedCommit = requireVerifiedTrustedCommit(deps, root);
       if (contract.baseCommit !== currentTrustedCommit) {
         throw new AwbsError(`Stale view. Current trusted commit is ${currentTrustedCommit}, changeset base is ${contract.baseCommit}. Create a new view from the current trusted database.`);
       }
@@ -162,6 +163,8 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
         if (appliedPaths.length === 0) {
           return { commit: null, applied: 0 };
         }
+        deps.git.addAll(targetRoot, appliedPaths.map(fromPosixPath));
+        const appliedPathStates = computeAppliedPathStates(deps.git, targetRoot, manifest);
 
         const changesetManifestHash = contentHash(manifest);
         const authorityContractHash = contentHash(contract);
@@ -172,13 +175,14 @@ export function createChangesetUseCases(deps: { files: FileDatabasePort; git: Gi
           changesetId: manifest.changesetId,
           viewId: manifest.viewId,
           appliedPaths,
+          appliedPathStates,
           changesetManifestHash,
           changesetPayloadHash: manifest.payloadHash,
           authorityContractHash,
           ext: {}
         });
         deps.authority.repairMirrors(targetRoot);
-        deps.git.addAll(targetRoot, [...appliedPaths.map(fromPosixPath), ...authorityCommitPaths(deps, targetRoot)]);
+        deps.git.addAll(targetRoot, authorityCommitPaths(deps, targetRoot));
         deps.git.commit(
           targetRoot,
           [
@@ -279,6 +283,22 @@ function applyFilesToTarget(
     appliedPaths.push(change.path);
   }
   return appliedPaths;
+}
+
+function computeAppliedPathStates(git: GitPort, targetRoot: string, manifest: ChangesetManifest): AuthorityAppliedPathState[] {
+  const states: AuthorityAppliedPathState[] = [];
+  for (const change of manifest.changes.filter((item) => item.allowed)) {
+    assertUserDataPath(change.path, "record trusted state for");
+    if (change.kind === "delete") {
+      states.push({ path: change.path, kind: "deleted", sha256: null });
+      continue;
+    }
+    if (!git.pathExistsInIndex(targetRoot, change.path)) {
+      throw new AwbsError(`Applied path is not staged for commit: ${change.path}`);
+    }
+    states.push({ path: change.path, kind: "file", sha256: git.fileSha256InIndex(targetRoot, change.path) });
+  }
+  return states.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function dataPathPolicyError(path: string): string | null {

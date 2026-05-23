@@ -106,6 +106,8 @@ awbs ledger inspect
 awbs ledger verify
 ```
 
+`ledger verify` 会校验 `refs/awbs/trusted` 指向的 commit 是否匹配 sealed ledger head entry。手工改 trusted ref、复制旧 ledger 再伪造文件内容，都不会被当成 AWBS 认证数据库。
+
 ## 6. 建立索引
 
 ```powershell

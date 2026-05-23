@@ -310,6 +310,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
       viewId: null,
       createdAt: now,
       appliedPaths: [],
+      appliedPathStates: [],
       changesetManifestHash: null,
       changesetPayloadHash: null,
       authorityContractHash: null,
@@ -373,6 +374,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
       viewId: operation.viewId,
       createdAt,
       appliedPaths: operation.appliedPaths,
+      appliedPathStates: operation.appliedPathStates,
       changesetManifestHash: operation.changesetManifestHash,
       changesetPayloadHash: operation.changesetPayloadHash,
       authorityContractHash: operation.authorityContractHash,
@@ -383,6 +385,7 @@ export class SealedAuthorityAdapter implements AuthorityPort {
         changesetId: operation.changesetId,
         viewId: operation.viewId,
         appliedPaths: operation.appliedPaths,
+        appliedPathStates: operation.appliedPathStates,
         changesetManifestHash: operation.changesetManifestHash,
         changesetPayloadHash: operation.changesetPayloadHash,
         authorityContractHash: operation.authorityContractHash

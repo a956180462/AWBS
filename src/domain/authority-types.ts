@@ -147,11 +147,18 @@ export type AuthorityChangesetApplyOperation = {
   changesetId: string;
   viewId: string;
   appliedPaths: string[];
+  appliedPathStates: AuthorityAppliedPathState[];
   changesetManifestHash: string;
   changesetPayloadHash: string;
   authorityContractHash: string;
   createdAt?: string;
   ext: Record<string, unknown>;
+};
+
+export type AuthorityAppliedPathState = {
+  path: string;
+  kind: "file" | "deleted";
+  sha256: string | null;
 };
 
 export type AuthorityLedgerEntry = {
@@ -166,6 +173,7 @@ export type AuthorityLedgerEntry = {
   viewId: string | null;
   createdAt: string;
   appliedPaths: string[];
+  appliedPathStates: AuthorityAppliedPathState[];
   changesetManifestHash: string | null;
   changesetPayloadHash: string | null;
   authorityContractHash: string | null;

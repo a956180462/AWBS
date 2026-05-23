@@ -9,7 +9,8 @@ import type { IndexKind, ViewManifest } from "../domain/types.ts";
 import type { AuthorityPort } from "../ports/authority.ts";
 import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { GitPort } from "../ports/git.ts";
-import { requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
+import { requireVerifiedTrustedCommit } from "./ledger.ts";
+import { withTrustedWorktree } from "./trusted-chain.ts";
 
 export type ViewUseCases = {
   createView(cwd: string, args: { out: string; readPaths: string[]; writePaths: string[] }): ViewManifest;
@@ -22,7 +23,7 @@ export function createViewUseCases(deps: { files: FileDatabasePort; git: GitPort
     createView(cwd: string, args: { out: string; readPaths: string[]; writePaths: string[] }): ViewManifest {
       const root = deps.files.findProjectRoot(cwd);
       deps.authority.ensureInitialized(root);
-      const baseCommit = requireTrustedCommit(deps.git, root);
+      const baseCommit = requireVerifiedTrustedCommit(deps, root);
       const workspacePath = resolve(root, args.out);
       assertWorkspaceOutputPath(root, workspacePath);
       deps.files.assertSafeOutputDirectory(workspacePath);

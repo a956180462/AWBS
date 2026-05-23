@@ -44,7 +44,7 @@ export function createDefaultRuntime(options: { authorityMode?: "local" | "auto"
   return {
     usecases: {
       init: createInitUseCases({ files, git, authority }),
-      index: createIndexUseCases({ files, git, index, summaries }),
+      index: createIndexUseCases({ files, git, authority, index, summaries }),
       view: createViewUseCases({ files, git, authority }),
       changeset: createChangesetUseCases({ files, git, authority }),
       authority: createAuthorityUseCases({ files, authority }),

@@ -728,7 +728,14 @@ Git 的 author、committer、用户名和邮箱不能作为 AWBS 的身份认证
 refs/awbs/trusted
 ```
 
-`ledger.seal.json` 是 AWBS 信任的密封账本；`ledger.mirror.json` 是给人看的明文镜像，可自动重建，不作为事实源；`refs/awbs/trusted` 指向当前 AWBS 认证数据库头。
+`ledger.seal.json` 是 AWBS 信任的密封账本；`ledger.mirror.json` 是给人看的明文镜像，可自动重建，不作为事实源；`refs/awbs/trusted` 指向当前 AWBS 认证数据库头。但 `refs/awbs/trusted` 不能单独成为事实源，它指向的 commit 必须被 ledger head entry 验证。
+
+当前 verify 会检查：
+
+- trusted commit 的父提交必须等于 ledger entry 的 `parentTrustedCommit`。
+- trusted commit message 必须包含 ledger entry id、operation hash 和 parent trusted commit。
+- trusted commit 相对 parent 的数据路径变更必须落在 `appliedPaths` 内。
+- `appliedPathStates` 记录的最终文件 sha256 必须和 trusted commit 中的文件内容一致。
 
 003 的 CLI 增加：
 
@@ -762,6 +769,7 @@ awbs authority session stop --control-token-stdin
 - `index rebuild` 扫描 currentTrustedCommit 的 Git tree，不把当前工作区污染文件写入索引。
 - `changeset apply` 只接受 baseCommit 等于 currentTrustedCommit 的 valid changeset。
 - apply 成功后写入业务文件变化、sealed ledger entry，并推进 `refs/awbs/trusted`。
+- `view create`、`index rebuild`、`summary set/get`、`changeset apply` 都会先要求 trusted chain 可验证。
 - 外部 Git commit 可以存在，但不会自动进入 AWBS 可信链。
 
 如果当前工作区干净且 `HEAD` 正好等于 currentTrustedCommit，apply 可以在当前工作区原地提交，方便普通使用。如果当前 Git `HEAD` 已经被外部 commit 推走，AWBS 不在外部 commit 上继续生长；apply 会基于 currentTrustedCommit 的临时 worktree 生成新的可信提交，并推进 `refs/awbs/trusted`。
@@ -811,6 +819,8 @@ entryHash
 operationHash
 parentTrustedCommit
 currentTrustedCommit
+appliedPaths
+appliedPathStates
 ```
 
 这样 AWBS 不需要阻止别人乱改文件或乱提交 Git；它只需要在验证时拒绝承认对不上可信链的状态。

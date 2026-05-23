@@ -13,6 +13,13 @@ export interface GitPort {
   updateRef(root: string, ref: string, commit: string): void;
   isAncestor(root: string, ancestor: string, descendant: string): boolean;
   revList(root: string, range: string): string[];
+  commitParents(root: string, commit: string): string[];
+  commitMessage(root: string, commit: string): string;
+  diffNameOnly(root: string, fromCommit: string, toCommit: string): string[];
+  pathExistsAtCommit(root: string, commit: string, path: string): boolean;
+  fileSha256AtCommit(root: string, commit: string, path: string): string;
+  pathExistsInIndex(root: string, path: string): boolean;
+  fileSha256InIndex(root: string, path: string): string;
   statusPorcelain(root: string): string;
   addAll(root: string, paths: string[]): void;
   commit(root: string, message: string): void;

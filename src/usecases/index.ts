@@ -7,7 +7,9 @@ import type { FileDatabasePort } from "../ports/file-database.ts";
 import type { GitPort } from "../ports/git.ts";
 import type { IndexStorePort } from "../ports/index-store.ts";
 import type { SummaryStorePort } from "../ports/summary-store.ts";
-import { requireTrustedCommit, withTrustedWorktree } from "./trusted-chain.ts";
+import type { AuthorityPort } from "../ports/authority.ts";
+import { requireVerifiedTrustedCommit } from "./ledger.ts";
+import { withTrustedWorktree } from "./trusted-chain.ts";
 
 export type IndexUseCases = {
   rebuildIndex(cwd: string): { active: number; removed: number; path: string };
@@ -20,6 +22,7 @@ export type IndexUseCases = {
 export function createIndexUseCases(deps: {
   files: FileDatabasePort;
   git: GitPort;
+  authority: AuthorityPort;
   index: IndexStorePort;
   summaries: SummaryStorePort;
 }): IndexUseCases {
@@ -28,7 +31,7 @@ export function createIndexUseCases(deps: {
       const root = deps.files.findProjectRoot(cwd);
       const indexFile = join(root, INDEX_PATH);
       const oldEntries = deps.index.readIndex(indexFile);
-      const commit = requireTrustedCommit(deps.git, root);
+      const commit = requireVerifiedTrustedCommit(deps, root);
       const activePaths = new Set<string>();
       const nextEntries: IndexEntry[] = [];
 
@@ -81,7 +84,7 @@ export function createIndexUseCases(deps: {
       const root = deps.files.findProjectRoot(cwd);
       const relPath = normalizeUserPath(args.path);
       assertUserDataPath(relPath, "write a summary for");
-      const commit = requireTrustedCommit(deps.git, root);
+      const commit = requireVerifiedTrustedCommit(deps, root);
       let kind: IndexKind | "unknown" = "unknown";
       let sha256: string | null = null;
       withTrustedWorktree(deps, root, commit, "awbs-summary-", (trustedRoot) => {
@@ -103,7 +106,7 @@ export function createIndexUseCases(deps: {
       const root = deps.files.findProjectRoot(cwd);
       const relPath = normalizeUserPath(path);
       assertUserDataPath(relPath, "read a summary for");
-      const commit = requireTrustedCommit(deps.git, root);
+      const commit = requireVerifiedTrustedCommit(deps, root);
       let sha256: string | null = null;
       withTrustedWorktree(deps, root, commit, "awbs-summary-", (trustedRoot) => {
         const absPath = join(trustedRoot, fromPosixPath(relPath));

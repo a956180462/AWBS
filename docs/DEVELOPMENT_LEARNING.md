@@ -166,10 +166,17 @@ ledger entry 使用：
 - `operationHash`
 - `parentTrustedCommit`
 - `baseCommit`
+- `appliedPaths`
+- `appliedPathStates`
 - `changesetPayloadHash`
 - `authorityContractHash`
 
-`ledger verify` 会重算 hash chain。
+`ledger verify` 会重算 hash chain，也会验证 `refs/awbs/trusted` 指向的 commit 是否真的匹配 ledger head entry：
+
+- commit parent 必须等于 `parentTrustedCommit`。
+- commit message 必须包含 ledger entry id、operation hash 和 parent trusted commit。
+- commit diff 中的数据路径必须被 `appliedPaths` 声明。
+- 当前 commit 中的最终文件内容必须匹配 `appliedPathStates` 记录的 sha256。
 
 ## 9. Authority Session 机制
 
@@ -259,6 +266,8 @@ tests/session.test.ts
 - view authority。
 - changeset apply。
 - trusted chain。
+- trusted ref retarget 拒绝。
+- forged trusted commit 拒绝。
 - clean rebuild。
 - session。
 - 对抗路径。
